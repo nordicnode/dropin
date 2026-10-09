@@ -1,0 +1,12 @@
+[package]
+name = "dropin-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dropin"
+path = "src/main.rs"
+
+[dependencies]
+dropin-core = { path = "../dropin-core" }
+clap = { workspace = true }
