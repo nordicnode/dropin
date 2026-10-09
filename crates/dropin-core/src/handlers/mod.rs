@@ -5,6 +5,7 @@
 pub mod appimage;
 pub mod deb;
 pub mod flatpak;
+pub mod rpm;
 pub mod script;
 pub mod tarball;
 

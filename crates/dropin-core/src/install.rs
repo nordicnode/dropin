@@ -12,9 +12,7 @@ pub fn plan_for(src: &Path) -> Result<InstallPlan> {
         Format::AppImage => handlers::appimage::plan(src),
         Format::Tarball | Format::Zip => handlers::tarball::plan(src),
         Format::Deb => handlers::deb::plan(src),
-        Format::Rpm => Err(Error::Unsupported(
-            ".rpm support lands in M1.1 (needs rpm2cpio or a Rust cpio reader)".into(),
-        )),
+        Format::Rpm => handlers::rpm::plan(src),
         Format::FlatpakRef | Format::FlatpakBundle => handlers::flatpak::plan(src),
         Format::Script => handlers::script::plan(src),
         Format::WindowsExe => Err(Error::Refused(
@@ -30,11 +28,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         Format::AppImage => handlers::appimage::install(src, opts)?,
         Format::Tarball | Format::Zip => handlers::tarball::install(src, opts)?,
         Format::Deb => handlers::deb::install(src, opts)?,
-        Format::Rpm => {
-            return Err(Error::Unsupported(
-                ".rpm support lands in M1.1".into(),
-            ))
-        }
+        Format::Rpm => handlers::rpm::install(src, opts)?,
         Format::FlatpakRef | Format::FlatpakBundle => handlers::flatpak::install(src, opts)?,
         Format::Script => handlers::script::install(src, opts)?,
         Format::WindowsExe => {
