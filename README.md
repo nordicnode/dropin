@@ -33,8 +33,9 @@ dropin install --system <file.deb>   # real system install via apt/dnf/pacman (p
 dropin list               # everything dropin installed
 dropin remove <name>      # clean removal, reversed from the ledger
 dropin doctor             # check helper tools
-dropin integrate          # double-click handling for AppImage/.deb/.rpm/.flatpakref/scripts
-dropin unintegrate        # remove double-click handling
+dropin integrate          # double-click handling + “Install as application”
+                          # right-click entries for Dolphin/Nemo/Nautilus/Thunar
+dropin unintegrate        # remove all desktop integration
 ```
 
 `dropin-gui <file>` is the graphical installer dialog (also what double-click

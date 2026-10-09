@@ -90,8 +90,10 @@ gets removed through the same package manager that installed it.
   what-will-happen, Install/Cancel, progress, trust checkbox for scripts.
   `dropin integrate` registers MIME handlers (AppImage/deb/rpm/flatpakref/scripts;
   archives deliberately stay with the archive manager).
-- **M3:** File-manager integration — Dolphin/Nautilus/Nemo "Install as application"
-  context entries; `update-desktop-database` handling.
+- **M3 (done 2026-10-09):** File-manager integration — `dropin integrate` now also
+  installs "Install as application" context entries for Dolphin (service menu),
+  Nemo (.nemo_action), Nautilus (Python extension), and Thunar (uca.xml merge
+  with backup + idempotent reinstall); `unintegrate` removes everything.
 - **M4:** Update awareness — AppImage zsync / release-feed checks on demand
   (`dropin update --all`), never in the background.
 
