@@ -3,12 +3,47 @@
 //! Everything here is fully offline. Installs default to user scope
 //! (no root required).
 
+pub mod cleanup;
 pub mod desktop;
 pub mod detect;
 pub mod handlers;
+pub mod health;
 pub mod install;
 pub mod ledger;
 pub mod verify;
+
+/// Test-only helpers for tests that redirect HOME/DROPIN_HOME.
+///
+/// Environment variables are process-global, and Rust runs tests in parallel
+/// threads: every test that mutates them MUST go through this module, or
+/// tests corrupt each other flakily.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run `f` with `HOME` and `DROPIN_HOME` pointed at `home`, restoring
+    /// both afterwards. Serialized against all other users of this helper.
+    pub(crate) fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
+        let _guard = LOCK.lock().unwrap();
+        let old_dropin = std::env::var("DROPIN_HOME").ok();
+        let old_home = std::env::var("HOME").ok();
+        std::env::set_var("DROPIN_HOME", home);
+        std::env::set_var("HOME", home);
+        let result = f();
+        match old_dropin {
+            Some(v) => std::env::set_var("DROPIN_HOME", v),
+            None => std::env::remove_var("DROPIN_HOME"),
+        }
+        match old_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        result
+    }
+}
 
 use std::io;
 use std::path::{Path, PathBuf};

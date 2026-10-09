@@ -93,8 +93,9 @@ dropin info <file>        # dry run: exactly what it would do, no changes
 dropin install <file>     # install (shows the plan; scripts need confirmation)
 dropin install --yes <file> --keep-source
 dropin install --system <file.deb>   # real system install via apt/dnf/pacman (polkit)
-dropin list               # everything dropin installed
+dropin list               # everything dropin installed (✓ = checksum-verified)
 dropin remove <name>      # clean removal, reversed from the ledger
+dropin remove --purge <name>  # also trash leftover config/cache/data dirs
 dropin update [name|--all]  # check for updates, on demand only
 dropin doctor             # verify helper tools
 dropin integrate          # double-click + file-manager integration

@@ -32,7 +32,12 @@ enum Cmd {
         system: bool,
     },
     /// Remove an app installed by dropin.
-    Remove { name: String },
+    Remove {
+        name: String,
+        /// Also move leftover config/cache/data dirs to the trash.
+        #[arg(long)]
+        purge: bool,
+    },
     /// Check installed apps for updates (on demand only, never in background).
     Update {
         /// Update a single app by name.
@@ -132,8 +137,8 @@ fn run() -> dropin_core::Result<()> {
             println!("Remove anytime with: dropin remove {}", outcome.name);
             Ok(())
         }
-        Cmd::Remove { name } => {
-            install::remove(&name)?;
+        Cmd::Remove { name, purge } => {
+            install::remove(&name, purge)?;
             println!("Removed '{name}'.");
             Ok(())
         }
@@ -168,6 +173,22 @@ fn run() -> dropin_core::Result<()> {
         Cmd::Doctor => {
             for (tool, ok, why) in install::doctor() {
                 println!("{} {:24} ({why})", if ok { "ok " } else { "MISS" }, tool);
+            }
+            let issues = dropin_core::health::check();
+            if issues.is_empty() {
+                println!("\nhealth: no issues found");
+            } else {
+                println!("\nhealth: {} issue(s) found", issues.len());
+                for i in issues {
+                    let tag = match i.kind {
+                        dropin_core::health::HealthKind::Orphaned => "orphaned",
+                        dropin_core::health::HealthKind::Duplicate => "duplicate",
+                        dropin_core::health::HealthKind::Shadowed => "shadowed",
+                        dropin_core::health::HealthKind::CrossSource => "also-installed",
+                    };
+                    println!("\n[{tag}] {}", i.message);
+                    println!("        hint: {}", i.hint);
+                }
             }
             Ok(())
         }

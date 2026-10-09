@@ -497,19 +497,19 @@ mod tests {
     fn install_remove_roundtrip() {
         let dir = std::env::temp_dir().join(format!("dropin-rpmi-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("DROPIN_HOME", dir.join("home"));
-        let rpm = build_fixture(&dir);
-        let outcome = crate::install::install(&rpm, &InstallOptions::default()).unwrap();
-        assert_eq!(outcome.name, "demotool2");
         let home = dir.join("home");
-        assert!(home.join(".local/bin/demotool2").is_symlink());
-        assert!(home
-            .join(".local/share/applications/dropin-demotool2.desktop")
-            .exists());
-        crate::install::remove("demotool2").unwrap();
-        assert!(!home.join(".local/opt/demotool2").exists());
-        assert!(!home.join(".local/bin/demotool2").exists());
-        std::env::remove_var("DROPIN_HOME");
+        crate::test_env::with_home(&home, || {
+            let rpm = build_fixture(&dir);
+            let outcome = crate::install::install(&rpm, &InstallOptions::default()).unwrap();
+            assert_eq!(outcome.name, "demotool2");
+            assert!(home.join(".local/bin/demotool2").is_symlink());
+            assert!(home
+                .join(".local/share/applications/dropin-demotool2.desktop")
+                .exists());
+            crate::install::remove("demotool2", false).unwrap();
+            assert!(!home.join(".local/opt/demotool2").exists());
+            assert!(!home.join(".local/bin/demotool2").exists());
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

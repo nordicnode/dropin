@@ -77,7 +77,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 }
 
 /// Remove an installed app, reversing everything the ledger recorded.
-pub fn remove(name: &str) -> Result<()> {
+/// With `purge`, also moves leftover config/cache/data dirs to the trash
+/// (conservative heuristics; never deletes outright).
+pub fn remove(name: &str, purge: bool) -> Result<()> {
     let slug = slugify(name);
     let ledger = Ledger::open()?;
     let inst = ledger.get(&slug)?;
@@ -116,6 +118,29 @@ pub fn remove(name: &str) -> Result<()> {
             eprintln!("warning: could not remove {}: {e}", p.display());
         }
     }
+
+    if purge && !inst.external {
+        let remaining: Vec<crate::ledger::Install> =
+            ledger.list()?.into_iter().filter(|i| i.name != slug).collect();
+        if crate::health::name_still_provided(&remaining, &inst) {
+            println!(
+                "note: skipping leftover purge — '{}' is still provided by another install or system package",
+                inst.name
+            );
+        } else {
+            let leftovers = crate::cleanup::find_leftovers(&inst);
+            if leftovers.is_empty() {
+                println!("no leftover config/cache/data dirs found");
+            } else {
+                let trashed = crate::cleanup::trash_leftovers(&leftovers)?;
+                println!("moved {} leftover dir(s) to the trash:", trashed.len());
+                for l in &leftovers {
+                    println!("  {}", l.what);
+                }
+            }
+        }
+    }
+
     ledger.forget(&slug)?;
     Ok(())
 }

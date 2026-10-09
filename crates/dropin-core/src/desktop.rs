@@ -215,23 +215,24 @@ mod tests {
     #[test]
     fn parse_and_write_roundtrip() {
         let dir = std::env::temp_dir().join(format!("dropin-desktop-{}", std::process::id()));
-        std::env::set_var("DROPIN_HOME", &dir);
-        let src = dir.join("app.desktop");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            &src,
-            "[Desktop Entry]\nType=Application\nName=Demo\nExec=/usr/bin/demo %F\nIcon=demo\n",
-        )
-        .unwrap();
-        let map = parse_desktop_file(&src).unwrap();
-        assert_eq!(map["Name"], "Demo");
-        assert_eq!(map["Exec"], "/usr/bin/demo %F");
-        let (path, _) = adopt_desktop_file(&src, "demo", "Demo", Path::new("/opt/root")).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("Exec=/opt/root/usr/bin/demo %F"));
-        assert!(text.contains("X-Dropin-Managed=true"));
+        crate::test_env::with_home(&dir, || {
+            let src = dir.join("app.desktop");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                &src,
+                "[Desktop Entry]\nType=Application\nName=Demo\nExec=/usr/bin/demo %F\nIcon=demo\n",
+            )
+            .unwrap();
+            let map = parse_desktop_file(&src).unwrap();
+            assert_eq!(map["Name"], "Demo");
+            assert_eq!(map["Exec"], "/usr/bin/demo %F");
+            let (path, _) =
+                adopt_desktop_file(&src, "demo", "Demo", Path::new("/opt/root")).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains("Exec=/opt/root/usr/bin/demo %F"));
+            assert!(text.contains("X-Dropin-Managed=true"));
+        });
         let _ = std::fs::remove_dir_all(&dir);
-        std::env::remove_var("DROPIN_HOME");
     }
 
     #[test]

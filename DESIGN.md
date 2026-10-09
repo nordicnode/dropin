@@ -109,6 +109,15 @@ gets removed through the same package manager that installed it.
   the squashfs payload at its magic-byte offset with pure-Rust `backhand` —
   `--appimage-extract` (which executes the image) is only a fallback for
   type-1 images.
+- **Phase 2 — Intelligence (done 2026-10-09):** `dropin doctor` now runs health
+  checks beyond helper tools: orphaned ledger entries (files deleted by hand),
+  duplicate installs (same menu name across formats), `.desktop` shadowing (a
+  user entry hiding a system one of the same basename — the dead-launcher
+  trap), and cross-source installs (same app via dpkg/rpm/flatpak → duplicate
+  menu entries). `dropin remove --purge` moves leftover `~/.config`,
+  `~/.local/share`, `~/.cache` dirs to the freedesktop trash — never deletes;
+  only name-matching dirs created at/after install time qualify, and the purge
+  is skipped entirely if the app is still provided elsewhere.
 
 ## Open questions
 
