@@ -33,7 +33,7 @@ pub struct InstallPlan {
 }
 
 /// The outcome of an install: everything the ledger must record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InstallOutcome {
     pub name: String,
     pub version: Option<String>,
@@ -42,6 +42,8 @@ pub struct InstallOutcome {
     pub paths: Vec<PathBuf>,
     /// True when files were installed outside dropin's tracking.
     pub external: bool,
+    /// Where to check for updates (e.g. X-AppImage-UpdateInformation).
+    pub update_info: Option<String>,
 }
 
 /// sha256 of a file, via the system `sha256sum` (fast, no new deps).

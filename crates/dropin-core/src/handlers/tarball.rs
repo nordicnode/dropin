@@ -258,6 +258,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         install_root: Some(root),
         paths,
         external: false,
+        update_info: None,
     })
 }
 

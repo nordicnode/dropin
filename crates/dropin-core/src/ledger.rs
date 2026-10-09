@@ -18,6 +18,8 @@ pub struct Install {
     /// True when installed outside dropin's tracking (system package manager,
     /// executed .run script). Removal is best-effort / delegated.
     pub external: bool,
+    /// Where to check for updates (e.g. X-AppImage-UpdateInformation).
+    pub update_info: Option<String>,
     pub created_at: String,
     pub files: Vec<String>,
 }
@@ -67,6 +69,17 @@ impl Ledger {
                 PRIMARY KEY (install_id, path)
              );",
         )?;
+        // Migration (M4): where to check for updates, e.g. an AppImage's
+        // X-AppImage-UpdateInformation string.
+        let cols: Vec<String> = self
+            .conn
+            .prepare("PRAGMA table_info(installs)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<_, _>>()?;
+        if !cols.iter().any(|c| c == "update_info") {
+            self.conn
+                .execute("ALTER TABLE installs ADD COLUMN update_info TEXT", [])?;
+        }
         Ok(())
     }
 }
@@ -80,6 +93,7 @@ pub struct NewInstall {
     pub source_sha256: Option<String>,
     pub install_root: Option<PathBuf>,
     pub external: bool,
+    pub update_info: Option<String>,
     pub files: Vec<PathBuf>,
 }
 
@@ -90,8 +104,8 @@ impl Ledger {
         self.conn
             .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
-            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 inst.name,
                 inst.format,
@@ -100,6 +114,7 @@ impl Ledger {
                 inst.source_sha256,
                 inst.install_root.as_ref().map(|p| p.display().to_string()),
                 inst.external as i32,
+                inst.update_info,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -114,7 +129,7 @@ impl Ledger {
 
     pub fn get(&self, name: &str) -> Result<Install> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
@@ -130,7 +145,8 @@ impl Ledger {
             source_sha256: row.get(5)?,
             install_root: row.get(6)?,
             external: row.get::<_, i32>(7)? != 0,
-            created_at: row.get(8)?,
+            update_info: row.get(8)?,
+            created_at: row.get(9)?,
             files,
         })
     }
@@ -147,7 +163,7 @@ impl Ledger {
 
     pub fn list(&self) -> Result<Vec<Install>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at
              FROM installs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -160,12 +176,13 @@ impl Ledger {
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, i32>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, created_at) =
+            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at) =
                 r?;
             out.push(Install {
                 id,
@@ -176,6 +193,7 @@ impl Ledger {
                 source_sha256,
                 install_root,
                 external: external != 0,
+                update_info,
                 created_at,
                 files: self.files_for(id)?,
             });
@@ -233,6 +251,52 @@ mod tests {
         assert_eq!(ledger.list().unwrap().len(), 1);
         ledger.forget("demo").unwrap();
         assert!(ledger.get("demo").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn migrates_pre_m4_database() {
+        let dir = std::env::temp_dir().join(format!("dropin-mig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("ledger.db");
+        // Simulate a pre-M4 database (no update_info column).
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE installs (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+              format TEXT NOT NULL, version TEXT, source_path TEXT NOT NULL,
+              source_sha256 TEXT, install_root TEXT, external INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')));
+             CREATE TABLE files (install_id INTEGER NOT NULL, path TEXT NOT NULL,
+              PRIMARY KEY (install_id, path));
+             INSERT INTO installs (name, format, source_path) VALUES ('old','AppImage','/tmp/x');",
+        )
+        .unwrap();
+        drop(conn);
+        // Opening with the new code must migrate and preserve the row.
+        let ledger = Ledger::open_at(&db_path).unwrap();
+        let got = ledger.get("old").unwrap();
+        assert_eq!(got.format, "AppImage");
+        assert_eq!(got.update_info, None);
+        // And new records can store update_info.
+        ledger
+            .record(&NewInstall {
+                name: "new".into(),
+                format: "AppImage".into(),
+                source_path: PathBuf::from("/tmp/y"),
+                update_info: Some("gh-releases-zsync|a|b|c".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            ledger.get("new").unwrap().update_info.as_deref(),
+            Some("gh-releases-zsync|a|b|c")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -311,6 +311,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         install_root: Some(root),
         paths,
         external: false,
+        update_info: None,
     })
 }
 
@@ -342,6 +343,7 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         install_root: None,
         paths: vec![],
         external: true,
+        update_info: None,
     })
 }
 

@@ -55,11 +55,18 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 
     let mut paths = vec![dest.clone()];
     let slug = slugify(&d.name_hint);
+    let mut update_info: Option<String> = None;
 
     // Extract the embedded .desktop file + icon for menu integration.
     // `--appimage-extract` works without FUSE (type 2 images).
     match extract_metadata(&dest) {
         Ok(meta) => {
+            // Capture the embedded update channel for `dropin update`.
+            if let Some(df) = &meta.desktop_file {
+                update_info = parse_desktop_file(df)
+                    .ok()
+                    .and_then(|m| m.get("X-AppImage-UpdateInformation").cloned());
+            }
             let (entry_path, mut extra) = match meta.desktop_file {
                 Some(df) => adopt_desktop_file(&df, &slug, &d.name_hint, &dest)?,
                 None => generate_entry(&d.name_hint, &slug, &dest)?,
@@ -82,6 +89,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         install_root: None,
         paths,
         external: false,
+        update_info,
     })
 }
 

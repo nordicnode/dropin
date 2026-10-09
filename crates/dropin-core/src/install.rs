@@ -47,6 +47,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         source_sha256: handlers::sha256_of(src).ok(),
         install_root: outcome.install_root.clone(),
         external: outcome.external,
+        update_info: outcome.update_info.clone(),
         files: outcome.paths.clone(),
     })?;
     Ok(outcome)
@@ -100,6 +101,125 @@ pub fn list() -> Result<Vec<crate::ledger::Install>> {
     Ledger::open()?.list()
 }
 
+/// The result of checking one app for updates.
+#[derive(Debug, Clone)]
+pub struct UpdateReport {
+    pub name: String,
+    pub status: UpdateStatus,
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateStatus {
+    /// Already current (or the updater confirmed nothing to do).
+    UpToDate(String),
+    /// An update was downloaded and applied.
+    Updated(String),
+    /// No automated channel; the user must check upstream themselves.
+    Manual(String),
+    /// Something failed; carries the reason.
+    Failed(String),
+}
+
+/// Check for updates. `name` selects one app, `all` covers everything.
+/// Never runs in the background — only when the user asks.
+pub fn update(name: Option<&str>, all: bool) -> Result<Vec<UpdateReport>> {
+    let ledger = Ledger::open()?;
+    let targets: Vec<crate::ledger::Install> = match (name, all) {
+        (Some(n), _) => vec![ledger.get(&slugify(n))?],
+        (None, true) => ledger.list()?,
+        (None, false) => {
+            return Err(Error::Refused(
+                "specify an app name or pass --all".into(),
+            ))
+        }
+    };
+    Ok(targets.iter().map(update_one).collect())
+}
+
+fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
+    let name = inst.name.clone();
+    // Flatpak owns its updates entirely.
+    if inst.format.starts_with("Flatpak") {
+        let id = flatpak_id(inst);
+        return match crate::run("flatpak", &["update", "--user", "--noninteractive", "-y", &id]) {
+            Ok(out) => {
+                let msg = out.trim().to_string();
+                if msg.contains("Nothing to do") || msg.is_empty() {
+                    UpdateReport { name, status: UpdateStatus::UpToDate("flatpak: nothing to do".into()) }
+                } else {
+                    UpdateReport { name, status: UpdateStatus::Updated("flatpak updated".into()) }
+                }
+            }
+            Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("flatpak update failed: {e}")) },
+        };
+    }
+    // AppImage: needs an embedded update channel and the updater tool.
+    if inst.format == "AppImage" {
+        let channel = inst.update_info.clone().unwrap_or_default();
+        if channel.is_empty() {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Manual(
+                    "no update channel embedded in this AppImage — check upstream manually".into(),
+                ),
+            };
+        }
+        if !have("appimageupdatetool") {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Manual(format!(
+                    "update channel available ({channel}) but `appimageupdatetool` is not installed"
+                )),
+            };
+        }
+        let appimage = inst
+            .files
+            .iter()
+            .find(|p| p.to_lowercase().ends_with(".appimage"));
+        let Some(appimage) = appimage else {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Failed("AppImage file not found in ledger".into()),
+            };
+        };
+        return match crate::run("appimageupdatetool", &["-O", appimage]) {
+            Ok(out) => {
+                let msg = out.trim().to_string();
+                if msg.contains("up to date") || msg.contains("nothing to do") {
+                    UpdateReport { name, status: UpdateStatus::UpToDate("already current".into()) }
+                } else {
+                    UpdateReport { name, status: UpdateStatus::Updated("updated in place".into()) }
+                }
+            }
+            Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("appimageupdatetool failed: {e}")) },
+        };
+    }
+    // Everything else: dropin can't know upstream.
+    let hint = match inst.format.as_str() {
+        s if s.contains("Debian") || s.contains("RPM") => {
+            "system packages update via your package manager (`apt upgrade`, `dnf upgrade`)"
+        }
+        s if s.contains("archive") => "tarballs have no update channel — re-download upstream",
+        _ => "no automated update source known — check upstream manually",
+    };
+    UpdateReport {
+        name,
+        status: UpdateStatus::Manual(hint.into()),
+    }
+}
+
+/// Best-effort recovery of the flatpak app id: prefer the Name= from the
+/// original .flatpakref, else the slug.
+fn flatpak_id(inst: &crate::ledger::Install) -> String {
+    std::fs::read_to_string(&inst.source_path)
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find_map(|l| l.trim().strip_prefix("Name=").map(|s| s.trim().to_string()))
+        })
+        .unwrap_or_else(|| inst.name.clone())
+}
+
 /// Environment sanity check: which helper tools are present?
 pub fn doctor() -> Vec<(String, bool, String)> {
     let dirs = UserDirs::new();
@@ -124,6 +244,11 @@ pub fn doctor() -> Vec<(String, bool, String)> {
             "menu refresh".into(),
         ),
         ("wine".into(), have("wine"), ".exe handoff (optional)".into()),
+        (
+            "appimageupdatetool".into(),
+            have("appimageupdatetool"),
+            "AppImage updates (optional)".into(),
+        ),
     ];
     // Ensure dirs exist as a side effect.
     let _ = dirs.ensure();

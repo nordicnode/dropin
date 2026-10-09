@@ -94,8 +94,12 @@ gets removed through the same package manager that installed it.
   installs "Install as application" context entries for Dolphin (service menu),
   Nemo (.nemo_action), Nautilus (Python extension), and Thunar (uca.xml merge
   with backup + idempotent reinstall); `unintegrate` removes everything.
-- **M4:** Update awareness — AppImage zsync / release-feed checks on demand
-  (`dropin update --all`), never in the background.
+- **M4 (done 2026-10-09):** Update awareness — `dropin update [name|--all]`, on demand
+  only, never in the background. The ledger stores each AppImage's embedded
+  `X-AppImage-UpdateInformation` channel at install (schema migrated); update
+  runs `appimageupdatetool` where a channel exists, delegates flatpaks to
+  `flatpak update --user`, and honestly reports "check upstream manually" for
+  everything else (deb/rpm via system package manager, tarballs re-download).
 
 ## Open questions
 

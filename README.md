@@ -36,6 +36,8 @@ dropin doctor             # check helper tools
 dropin integrate          # double-click handling + “Install as application”
                           # right-click entries for Dolphin/Nemo/Nautilus/Thunar
 dropin unintegrate        # remove all desktop integration
+dropin update --all       # check everything for updates (on demand only)
+dropin update <name>      # check one app
 ```
 
 `dropin-gui <file>` is the graphical installer dialog (also what double-click

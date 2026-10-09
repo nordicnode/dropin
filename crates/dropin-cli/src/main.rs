@@ -33,6 +33,14 @@ enum Cmd {
     },
     /// Remove an app installed by dropin.
     Remove { name: String },
+    /// Check installed apps for updates (on demand only, never in background).
+    Update {
+        /// Update a single app by name.
+        name: Option<String>,
+        /// Check everything dropin installed.
+        #[arg(long)]
+        all: bool,
+    },
     /// List apps installed by dropin.
     List,
     /// Check helper tools and environment.
@@ -113,6 +121,20 @@ fn run() -> dropin_core::Result<()> {
         Cmd::Remove { name } => {
             install::remove(&name)?;
             println!("Removed '{name}'.");
+            Ok(())
+        }
+        Cmd::Update { name, all } => {
+            use dropin_core::install::UpdateStatus;
+            let reports = install::update(name.as_deref(), all)?;
+            for r in reports {
+                let (tag, msg) = match r.status {
+                    UpdateStatus::UpToDate(m) => ("up-to-date", m),
+                    UpdateStatus::Updated(m) => ("updated", m),
+                    UpdateStatus::Manual(m) => ("manual", m),
+                    UpdateStatus::Failed(m) => ("FAILED", m),
+                };
+                println!("{:12} {:20} {msg}", format!("[{tag}]"), r.name);
+            }
             Ok(())
         }
         Cmd::List => {

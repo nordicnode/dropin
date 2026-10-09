@@ -71,5 +71,6 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         install_root: None,
         paths: vec![],
         external: true,
+        update_info: None,
     })
 }
