@@ -376,10 +376,10 @@ mod tests {
             cpio.extend_from_slice(name.as_bytes());
             cpio.push(0);
             let namepad = (4 - (name.len() + 1) % 4) % 4;
-            cpio.extend(std::iter::repeat(0).take(namepad));
+            cpio.extend(std::iter::repeat_n(0, namepad));
             cpio.extend_from_slice(data);
             let datapad = (4 - data.len() % 4) % 4;
-            cpio.extend(std::iter::repeat(0).take(datapad));
+            cpio.extend(std::iter::repeat_n(0, datapad));
         };
         entry("usr", 0o040755, &[]);
         entry("usr/bin", 0o040755, &[]);

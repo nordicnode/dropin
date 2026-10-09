@@ -82,10 +82,14 @@ gets removed through the same package manager that installed it.
 
 ## Milestones
 
-- **M1 (now):** `dropin-core` + `dropin-cli`. Detection, ledger, AppImage /
+- **M1 (done 2026-10-09):** `dropin-core` + `dropin-cli`. Detection, ledger, AppImage /
   tarball / deb / flatpakref / script handlers, `install|remove|list|info|doctor`.
-- **M2:** `dropin-gui` double-click dialog (iced): app name, version, what-will-happen,
-  Install/Cancel, progress. Registers MIME handlers for the formats.
+- **M1.1 (done 2026-10-09):** pure-Rust `.rpm` handler (RPM header + cpio reader,
+  no rpm2cpio needed), rootless like `.deb`.
+- **M2 (in progress):** `dropin-gui` double-click dialog (egui): app name, version,
+  what-will-happen, Install/Cancel, progress, trust checkbox for scripts.
+  `dropin integrate` registers MIME handlers (AppImage/deb/rpm/flatpakref/scripts;
+  archives deliberately stay with the archive manager).
 - **M3:** File-manager integration — Dolphin/Nautilus/Nemo "Install as application"
   context entries; `update-desktop-database` handling.
 - **M4:** Update awareness — AppImage zsync / release-feed checks on demand

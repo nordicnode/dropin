@@ -69,36 +69,41 @@ impl Ledger {
         )?;
         Ok(())
     }
+}
 
-    pub fn record(
-        &self,
-        name: &str,
-        format: &str,
-        version: Option<&str>,
-        source_path: &Path,
-        source_sha256: Option<&str>,
-        install_root: Option<&Path>,
-        external: bool,
-        files: &[PathBuf],
-    ) -> Result<i64> {
+#[derive(Debug, Clone, Default)]
+pub struct NewInstall {
+    pub name: String,
+    pub format: String,
+    pub version: Option<String>,
+    pub source_path: PathBuf,
+    pub source_sha256: Option<String>,
+    pub install_root: Option<PathBuf>,
+    pub external: bool,
+    pub files: Vec<PathBuf>,
+}
+
+impl Ledger {
+    pub fn record(&self, inst: &NewInstall) -> Result<i64> {
         // Replace any previous install of the same name: the old files were
         // already removed (or the install is being overwritten).
-        self.conn.execute("DELETE FROM installs WHERE name = ?1", params![name])?;
+        self.conn
+            .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
             "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
-                name,
-                format,
-                version,
-                source_path.display().to_string(),
-                source_sha256,
-                install_root.map(|p| p.display().to_string()),
-                external as i32,
+                inst.name,
+                inst.format,
+                inst.version,
+                inst.source_path.display().to_string(),
+                inst.source_sha256,
+                inst.install_root.as_ref().map(|p| p.display().to_string()),
+                inst.external as i32,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
-        for f in files {
+        for f in &inst.files {
             self.conn.execute(
                 "INSERT OR IGNORE INTO files (install_id, path) VALUES (?1, ?2)",
                 params![id, f.display().to_string()],
@@ -213,16 +218,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dropin-ledger-{}", std::process::id()));
         let ledger = Ledger::open_at(&dir.join("ledger.db")).unwrap();
         ledger
-            .record(
-                "demo",
-                "AppImage",
-                Some("1.0"),
-                Path::new("/tmp/demo.AppImage"),
-                None,
-                None,
-                false,
-                &[PathBuf::from("/tmp/x.desktop")],
-            )
+            .record(&NewInstall {
+                name: "demo".into(),
+                format: "AppImage".into(),
+                version: Some("1.0".into()),
+                source_path: PathBuf::from("/tmp/demo.AppImage"),
+                files: vec![PathBuf::from("/tmp/x.desktop")],
+                ..Default::default()
+            })
             .unwrap();
         let got = ledger.get("demo").unwrap();
         assert_eq!(got.format, "AppImage");

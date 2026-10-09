@@ -1,0 +1,12 @@
+[package]
+name = "dropin-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dropin-gui"
+path = "src/main.rs"
+
+[dependencies]
+dropin-core = { path = "../dropin-core" }
+eframe = "0.32"

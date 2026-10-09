@@ -125,7 +125,7 @@ pub fn clean_name(stem: &str) -> String {
             if i < bytes.len() && i > 0 && (bytes[i - 1] == b'-' || bytes[i - 1] == b'_' || bytes[i-1] == b'v' || bytes[i-1] == b'V') {
                 // make sure there is at least one digit in the stripped part
                 let tail = &s[i..];
-                if tail.chars().any(|c| c.is_ascii_digit()) { Some(if bytes[i-1] == b'v' || bytes[i-1] == b'V' { i - 1 } else { i - 1 }) } else { None }
+                if tail.chars().any(|c| c.is_ascii_digit()) { Some(i - 1) } else { None }
             } else {
                 None
             }
@@ -136,13 +136,13 @@ pub fn clean_name(stem: &str) -> String {
             (None, Some(v)) => s.truncate(v),
             (None, None) => break,
         }
-        s = s.trim_end_matches(|c| c == '-' || c == '_' || c == '.').to_string();
+        s = s.trim_end_matches(['-', '_', '.']).to_string();
         if s.is_empty() {
             return stem.to_string();
         }
     }
     // "app-1.2.3" edge: the loop above handles it; final tidy.
-    s.trim_end_matches(|c| c == '-' || c == '_' || c == '.')
+    s.trim_end_matches(['-', '_', '.'])
         .to_string()
 }
 

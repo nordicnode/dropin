@@ -128,10 +128,12 @@ pub fn detect(path: &Path) -> Result<Detection> {
         return Ok(mk(path, Format::Tarball, true));
     }
     // zip: PK\x03\x04 (flatpak bundles are ostree, not zip — handled by extension)
-    if head.len() >= 4 && head[0] == b'P' && head[1] == b'K' {
-        if extension == "zip" || file_name.ends_with(".zip") {
-            return Ok(mk(path, Format::Zip, true));
-        }
+    if head.len() >= 4
+        && head[0] == b'P'
+        && head[1] == b'K'
+        && (extension == "zip" || file_name.ends_with(".zip"))
+    {
+        return Ok(mk(path, Format::Zip, true));
     }
     // shell script shebang
     if head.starts_with(b"#!") {

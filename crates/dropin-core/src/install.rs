@@ -39,17 +39,16 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         Format::Unknown => return Err(Error::Unsupported("unknown format".into())),
     };
     let ledger = Ledger::open()?;
-    let sha = handlers::sha256_of(src).ok();
-    ledger.record(
-        &outcome.name,
-        d.format.label(),
-        outcome.version.as_deref(),
-        src,
-        sha.as_deref(),
-        outcome.install_root.as_deref(),
-        outcome.external,
-        &outcome.paths,
-    )?;
+    ledger.record(&crate::ledger::NewInstall {
+        name: outcome.name.clone(),
+        format: d.format.label().to_string(),
+        version: outcome.version.clone(),
+        source_path: src.to_path_buf(),
+        source_sha256: handlers::sha256_of(src).ok(),
+        install_root: outcome.install_root.clone(),
+        external: outcome.external,
+        files: outcome.paths.clone(),
+    })?;
     Ok(outcome)
 }
 
