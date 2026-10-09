@@ -8,6 +8,7 @@ pub mod detect;
 pub mod handlers;
 pub mod install;
 pub mod ledger;
+pub mod verify;
 
 use std::io;
 use std::path::{Path, PathBuf};

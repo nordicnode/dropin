@@ -100,6 +100,15 @@ gets removed through the same package manager that installed it.
   runs `appimageupdatetool` where a channel exists, delegates flatpaks to
   `flatpak update --user`, and honestly reports "check upstream manually" for
   everything else (deb/rpm via system package manager, tarballs re-download).
+- **Phase 1 — Trust (done 2026-10-09):** integrity verification + safe metadata.
+  `dropin install` checks companion checksum files (`foo.sha256`, `SHA256SUMS`,
+  …) in the download directory — fully offline; a mismatch **refuses** the
+  install with expected/actual hashes (Cemu-proof), a match records
+  `verified` in the ledger and shows a ✓ badge in `info`/`list`/GUI (the GUI
+  disables Install on mismatch). AppImage `.desktop`/icon extraction now reads
+  the squashfs payload at its magic-byte offset with pure-Rust `backhand` —
+  `--appimage-extract` (which executes the image) is only a fallback for
+  type-1 images.
 
 ## Open questions
 

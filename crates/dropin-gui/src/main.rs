@@ -52,6 +52,7 @@ struct ReviewState {
     plan: InstallPlan,
     size: u64,
     sha: String,
+    verified: dropin_core::verify::Verification,
     trust_checked: bool,
 }
 
@@ -76,7 +77,12 @@ impl DropinApp {
                 Err(e) => Phase::Fatal(format!("{e}")),
                 Ok(plan) => {
                     let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-                    let sha = dropin_core::handlers::sha256_of(&file)
+                    let full_sha = dropin_core::handlers::sha256_of(&file).ok();
+                    let verified = match &full_sha {
+                        Some(sha) => dropin_core::verify::verify(&file, sha),
+                        None => dropin_core::verify::Verification::Unverified,
+                    };
+                    let sha = full_sha
                         .map(|s| {
                             if s.len() > 16 {
                                 format!("{}…", &s[..16])
@@ -84,12 +90,13 @@ impl DropinApp {
                                 s
                             }
                         })
-                        .unwrap_or_else(|_| "unavailable".into());
+                        .unwrap_or_else(|| "unavailable".into());
                     Phase::Review(ReviewState {
                         detection,
                         plan,
                         size,
                         sha,
+                        verified,
                         trust_checked: false,
                     })
                 }
@@ -253,6 +260,27 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
         );
         ui.label(egui::RichText::new(file.display().to_string()).weak().small());
         ui.label(egui::RichText::new(format!("sha256 {}", st.sha)).weak().small());
+        match &st.verified {
+            dropin_core::verify::Verification::Verified { .. } => {
+                ui.label(
+                    egui::RichText::new("✓ checksum verified")
+                        .color(egui::Color32::from_rgb(120, 220, 130)),
+                );
+            }
+            dropin_core::verify::Verification::Mismatch { .. } => {
+                ui.label(
+                    egui::RichText::new("✗ checksum MISMATCH — install will be refused")
+                        .color(egui::Color32::from_rgb(255, 120, 120))
+                        .strong(),
+                );
+            }
+            dropin_core::verify::Verification::Unverified => {
+                ui.label(
+                    egui::RichText::new("unverified — no checksum file found")
+                        .weak(),
+                );
+            }
+        }
 
         ui.add_space(12.0);
         ui.strong("dropin will:");
@@ -289,7 +317,11 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
 
         ui.add_space(16.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_install = !needs_trust || st.trust_checked;
+            let checksum_ok = !matches!(
+                st.verified,
+                dropin_core::verify::Verification::Mismatch { .. }
+            );
+            let can_install = (!needs_trust || st.trust_checked) && checksum_ok;
             let install_btn = ui.add_enabled(
                 can_install,
                 egui::Button::new(egui::RichText::new("Install").strong()),

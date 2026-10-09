@@ -20,6 +20,8 @@ pub struct Install {
     pub external: bool,
     /// Where to check for updates (e.g. X-AppImage-UpdateInformation).
     pub update_info: Option<String>,
+    /// True when a companion checksum verified at install time.
+    pub verified: bool,
     pub created_at: String,
     pub files: Vec<String>,
 }
@@ -71,6 +73,7 @@ impl Ledger {
         )?;
         // Migration (M4): where to check for updates, e.g. an AppImage's
         // X-AppImage-UpdateInformation string.
+        // Migration (Phase 1): whether the install's checksum verified.
         let cols: Vec<String> = self
             .conn
             .prepare("PRAGMA table_info(installs)")?
@@ -79,6 +82,12 @@ impl Ledger {
         if !cols.iter().any(|c| c == "update_info") {
             self.conn
                 .execute("ALTER TABLE installs ADD COLUMN update_info TEXT", [])?;
+        }
+        if !cols.iter().any(|c| c == "verified") {
+            self.conn.execute(
+                "ALTER TABLE installs ADD COLUMN verified INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -94,6 +103,7 @@ pub struct NewInstall {
     pub install_root: Option<PathBuf>,
     pub external: bool,
     pub update_info: Option<String>,
+    pub verified: bool,
     pub files: Vec<PathBuf>,
 }
 
@@ -104,8 +114,8 @@ impl Ledger {
         self.conn
             .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
-            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 inst.name,
                 inst.format,
@@ -115,6 +125,7 @@ impl Ledger {
                 inst.install_root.as_ref().map(|p| p.display().to_string()),
                 inst.external as i32,
                 inst.update_info,
+                inst.verified as i32,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -129,7 +140,7 @@ impl Ledger {
 
     pub fn get(&self, name: &str) -> Result<Install> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
@@ -146,7 +157,8 @@ impl Ledger {
             install_root: row.get(6)?,
             external: row.get::<_, i32>(7)? != 0,
             update_info: row.get(8)?,
-            created_at: row.get(9)?,
+            verified: row.get::<_, i32>(9)? != 0,
+            created_at: row.get(10)?,
             files,
         })
     }
@@ -163,7 +175,7 @@ impl Ledger {
 
     pub fn list(&self) -> Result<Vec<Install>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at
              FROM installs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -177,12 +189,13 @@ impl Ledger {
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, i32>(7)?,
                 row.get::<_, Option<String>>(8)?,
-                row.get::<_, String>(9)?,
+                row.get::<_, i32>(9)?,
+                row.get::<_, String>(10)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, created_at) =
+            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at) =
                 r?;
             out.push(Install {
                 id,
@@ -194,6 +207,7 @@ impl Ledger {
                 install_root,
                 external: external != 0,
                 update_info,
+                verified: verified != 0,
                 created_at,
                 files: self.files_for(id)?,
             });

@@ -75,6 +75,20 @@ fn run() -> dropin_core::Result<()> {
             if let Some(v) = plan.version {
                 println!("version: {v}");
             }
+            // Integrity preview: same check install would run.
+            if let Ok(sha) = dropin_core::handlers::sha256_of(&file) {
+                match dropin_core::verify::verify(&file, &sha) {
+                    dropin_core::verify::Verification::Verified { checksum_file } => {
+                        println!("integrity: verified ✓ (SHA-256, from {checksum_file})");
+                    }
+                    dropin_core::verify::Verification::Mismatch { .. } => {
+                        println!("integrity: CHECKSUM MISMATCH ✗ — install would be refused");
+                    }
+                    dropin_core::verify::Verification::Unverified => {
+                        println!("integrity: unverified — no checksum file next to the download");
+                    }
+                }
+            }
             if plan.needs_root {
                 println!("needs:   root");
             }
@@ -146,7 +160,8 @@ fn run() -> dropin_core::Result<()> {
             for i in items {
                 let ext = if i.external { " [external]" } else { "" };
                 let ver = i.version.map(|v| format!(" {v}")).unwrap_or_default();
-                println!("{}{} — {}{ext}", i.name, ver, i.format, ext = ext);
+                let badge = if i.verified { " ✓" } else { "" };
+                println!("{}{} — {}{}{ext}", i.name, ver, i.format, badge, ext = ext);
             }
             Ok(())
         }

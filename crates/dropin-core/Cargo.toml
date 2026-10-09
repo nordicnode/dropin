@@ -8,3 +8,4 @@ rusqlite = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+backhand = "0.25"

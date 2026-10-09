@@ -24,6 +24,28 @@ pub fn plan_for(src: &Path) -> Result<InstallPlan> {
 
 pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let d = detect::detect(src)?;
+    // Integrity check before anything touches the system: a companion
+    // checksum that doesn't match means a corrupt or tampered download.
+    let sha256 = handlers::sha256_of(src).ok();
+    let verified = match sha256.as_deref() {
+        Some(sha) => match crate::verify::verify(src, sha) {
+            crate::verify::Verification::Verified { checksum_file } => {
+                println!("integrity: SHA-256 verified (from {checksum_file})");
+                true
+            }
+            crate::verify::Verification::Unverified => false,
+            crate::verify::Verification::Mismatch {
+                expected,
+                actual,
+                checksum_file,
+            } => {
+                return Err(Error::Refused(format!(
+                    "checksum mismatch — refusing to install.\n  expected ({checksum_file}): {expected}\n  actual:                    {actual}\nThis usually means a corrupt or tampered download; re-download and try again."
+                )));
+            }
+        },
+        None => false,
+    };
     let outcome = match d.format {
         Format::AppImage => handlers::appimage::install(src, opts)?,
         Format::Tarball | Format::Zip => handlers::tarball::install(src, opts)?,
@@ -44,10 +66,11 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         format: d.format.label().to_string(),
         version: outcome.version.clone(),
         source_path: src.to_path_buf(),
-        source_sha256: handlers::sha256_of(src).ok(),
+        source_sha256: sha256,
         install_root: outcome.install_root.clone(),
         external: outcome.external,
         update_info: outcome.update_info.clone(),
+        verified,
         files: outcome.paths.clone(),
     })?;
     Ok(outcome)
