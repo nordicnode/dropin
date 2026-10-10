@@ -107,7 +107,7 @@ For AppImages from GitHub releases with no zsync channel, `dropin track <name> -
 - **Static audit first.** Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo. No jargon.
 - **Sandboxed execution.** Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn't installed, dropin refuses rather than running unsandboxed.
 - **Full logging.** Every byte of installer output is logged to `~/.local/share/dropin/script-logs/`, viewable from the GUI.
-- **Complete undo.** Before the script runs, dropin snapshots your writable folders and backs up every file. Removing the app later deletes what the installer added and restores what it changed or deleted, with a plain-language summary of what was undone.
+- **Complete undo.** Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted, with a plain-language summary of what was undone.
 
 The GUI shows the audit findings, lets you allow internet for that install only, and offers one-click retry with internet if a blocked download was the failure.
 
