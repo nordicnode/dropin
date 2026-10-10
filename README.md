@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="128" alt="dropin logo">
+  <img src="assets/logo-v2.png" width="128" alt="dropin logo">
 </p>
 
 <h1 align="center">dropin</h1>
