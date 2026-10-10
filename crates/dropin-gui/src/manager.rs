@@ -22,6 +22,50 @@ struct AppRow {
     github_repo: Option<String>,
     has_snapshots: bool,
     has_env: bool,
+    /// Human-readable disk usage, if the install root exists.
+    size: Option<String>,
+    /// Install date as YYYY-MM-DD, if known.
+    installed_on: Option<String>,
+}
+
+/// Recursively sum file sizes under a path (cap at 100k entries).
+fn dir_size(path: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let mut count = 0u32;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        if count > 100_000 {
+            break;
+        }
+        count += 1;
+        if let Ok(meta) = std::fs::symlink_metadata(&p) {
+            if meta.is_dir() && !meta.file_type().is_symlink() {
+                if let Ok(entries) = std::fs::read_dir(&p) {
+                    for e in entries.filter_map(|e| e.ok()) {
+                        stack.push(e.path());
+                    }
+                }
+            } else if meta.is_file() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+fn human_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn load_apps() -> Vec<AppRow> {
@@ -34,6 +78,21 @@ fn load_apps() -> Vec<AppRow> {
                 .as_ref()
                 .map(|j| j != "{}" && !j.is_empty())
                 .unwrap_or(false);
+            // Disk usage from the install root.
+            let size = inst.install_root.as_ref().and_then(|root| {
+                let p = std::path::Path::new(root);
+                if p.exists() {
+                    Some(human_size(dir_size(p)))
+                } else {
+                    None
+                }
+            });
+            // Install date from created_at (first 10 chars = YYYY-MM-DD).
+            let installed_on = if inst.created_at.len() >= 10 {
+                Some(inst.created_at[..10].to_string())
+            } else {
+                None
+            };
             rows.push(AppRow {
                 name: inst.name,
                 format: inst.format,
@@ -42,6 +101,8 @@ fn load_apps() -> Vec<AppRow> {
                 github_repo: inst.github_repo,
                 has_snapshots,
                 has_env,
+                size,
+                installed_on,
             });
         }
     }
@@ -84,8 +145,29 @@ pub struct ManagerApp {
     env_new_value: String,
     // search/filter
     search: String,
+    sort_by: SortBy,
+    format_filter: Option<String>,
     // bulk selection
     selected: std::collections::BTreeSet<String>,
+    select_mode: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum SortBy {
+    #[default]
+    Name,
+    Size,
+    Recent,
+}
+
+impl SortBy {
+    fn label(self) -> &'static str {
+        match self {
+            SortBy::Name => "Name",
+            SortBy::Size => "Size",
+            SortBy::Recent => "Recently installed",
+        }
+    }
 }
 
 impl ManagerApp {
@@ -111,6 +193,9 @@ impl ManagerApp {
             env_new_key: String::new(),
             env_new_value: String::new(),
             search: String::new(),
+            sort_by: SortBy::Name,
+            format_filter: None,
+            select_mode: false,
             selected: std::collections::BTreeSet::new(),
         }
     }
@@ -434,18 +519,49 @@ impl eframe::App for ManagerApp {
                 });
                 return;
             }
-            // Filter by search.
+            // Filter by search and format, then sort.
             let query = self.search.trim().to_lowercase();
-            let filtered: Vec<AppRow> = self
+            let mut filtered: Vec<AppRow> = self
                 .apps
                 .iter()
                 .filter(|a| {
-                    query.is_empty()
+                    let matches_query = query.is_empty()
                         || a.name.to_lowercase().contains(&query)
-                        || a.format.to_lowercase().contains(&query)
+                        || a.format.to_lowercase().contains(&query);
+                    let matches_format = self
+                        .format_filter
+                        .as_ref()
+                        .map(|f| &a.format == f)
+                        .unwrap_or(true);
+                    matches_query && matches_format
                 })
                 .cloned()
                 .collect();
+            // Parse "1.2 GB" etc back to bytes for sorting; unknown last.
+            fn parse_size(s: &Option<String>) -> u64 {
+                let s = match s {
+                    Some(s) => s,
+                    None => return 0,
+                };
+                let (num, unit) = s.split_at(s.find(' ').unwrap_or(s.len()));
+                let num: f64 = num.trim().parse().unwrap_or(0.0);
+                let mult = match unit.trim() {
+                    "GB" => 1024u64.pow(3) as f64,
+                    "MB" => 1024u64.pow(2) as f64,
+                    "KB" => 1024.0,
+                    _ => 1.0,
+                };
+                (num * mult) as u64
+            }
+            match self.sort_by {
+                SortBy::Name => {
+                    filtered.sort_by_key(|a| a.name.to_lowercase());
+                }
+                SortBy::Recent => filtered.sort_by(|a, b| b.installed_on.cmp(&a.installed_on)),
+                SortBy::Size => {
+                    filtered.sort_by_key(|a| std::cmp::Reverse(parse_size(&a.size)));
+                }
+            }
             if filtered.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
@@ -457,31 +573,94 @@ impl eframe::App for ManagerApp {
                 });
                 return;
             }
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} app{} installed",
-                    self.apps.len(),
-                    if self.apps.len() == 1 { "" } else { "s" }
-                ))
-                .small()
-                .color(style::color::TEXT_FAINT),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} app{} installed",
+                        self.apps.len(),
+                        if self.apps.len() == 1 { "" } else { "s" }
+                    ))
+                    .small()
+                    .color(style::color::TEXT_FAINT),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Format filter.
+                    let mut formats: Vec<String> = self
+                        .apps
+                        .iter()
+                        .map(|a| a.format.clone())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    formats.sort();
+                    egui::ComboBox::from_id_salt("format_filter")
+                        .selected_text(
+                            self.format_filter
+                                .as_deref()
+                                .unwrap_or("All formats"),
+                        )
+                        .width(130.0)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(&mut self.format_filter, None, "All formats")
+                                .clicked()
+                            {
+                                self.selected.clear();
+                            }
+                            for f in &formats {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.format_filter,
+                                        Some(f.clone()),
+                                        f,
+                                    )
+                                    .clicked()
+                                {
+                                    self.selected.clear();
+                                }
+                            }
+                        });
+                    ui.add_space(8.0);
+                    // Sort.
+                    egui::ComboBox::from_id_salt("sort_by")
+                        .selected_text(self.sort_by.label())
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            for opt in [SortBy::Name, SortBy::Size, SortBy::Recent] {
+                                ui.selectable_value(&mut self.sort_by, opt, opt.label());
+                            }
+                        });
+                    // Select mode toggle.
+                    ui.add_space(8.0);
+                    if ui
+                        .checkbox(&mut self.select_mode, "Select")
+                        .changed()
+                        && !self.select_mode
+                    {
+                        self.selected.clear();
+                    }
+                });
+            });
             ui.add_space(8.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for app in &filtered {
                     // Clone the row: app_card may mutate self (dialogs, ops).
                     let app = app.clone();
-                    let mut checked = self.selected.contains(&app.name);
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut checked, "").changed() {
-                            if checked {
-                                self.selected.insert(app.name.clone());
-                            } else {
-                                self.selected.remove(&app.name);
+                    if self.select_mode {
+                        let mut checked = self.selected.contains(&app.name);
+                        ui.horizontal(|ui| {
+                            if ui.checkbox(&mut checked, "").changed() {
+                                if checked {
+                                    self.selected.insert(app.name.clone());
+                                } else {
+                                    self.selected.remove(&app.name);
+                                }
                             }
-                        }
+                            self.app_card(ui, &app, busy);
+                        });
+                    } else {
                         self.app_card(ui, &app, busy);
-                    });
+                    }
                     ui.add_space(8.0);
                 }
             });
@@ -544,34 +723,62 @@ impl ManagerApp {
                         ui.add_space(2.0);
                         style::faint_label(ui, &format!("tracking {repo}"));
                     }
+                    // Size and install date, subtle.
+                    if app.size.is_some() || app.installed_on.is_some() {
+                        ui.add_space(2.0);
+                        let mut meta = Vec::new();
+                        if let Some(s) = &app.size {
+                            meta.push(s.clone());
+                        }
+                        if let Some(d) = &app.installed_on {
+                            meta.push(format!("installed {d}"));
+                        }
+                        style::faint_label(ui, &meta.join(" · "));
+                    }
                 });
+                // Primary action: Launch. Everything else in the ⋯ menu.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if style::ghost_button(ui, "Remove").clicked() && !busy {
-                        act = Act::Remove;
-                    }
-                    if app.has_snapshots && style::ghost_button(ui, "Rollback").clicked() && !busy {
-                        act = Act::Rollback;
-                    }
-                    if style::ghost_button(ui, "Env…").clicked() && !busy {
-                        act = Act::EnvVars;
-                    }
+                    let is_script = app.format == "installer script";
+                    ui.menu_button("⋯", |ui| {
+                        ui.set_min_width(160.0);
+                        if !is_script && ui.button("Check for update").clicked() && !busy {
+                            act = Act::Update;
+                            ui.close();
+                        }
+                        if app.has_snapshots && ui.button("Rollback…").clicked() && !busy {
+                            act = Act::Rollback;
+                            ui.close();
+                        }
+                        if ui.button("Environment…").clicked() && !busy {
+                            act = Act::EnvVars;
+                            ui.close();
+                        }
+                        if !is_script {
+                            if app.github_repo.is_some() {
+                                if ui.button("Stop tracking").clicked() && !busy {
+                                    act = Act::Untrack;
+                                    ui.close();
+                                }
+                            } else if ui.button("Track GitHub releases…").clicked() && !busy {
+                                act = Act::Track;
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .button(
+                                egui::RichText::new("Remove…").color(style::color::BAD),
+                            )
+                            .clicked()
+                            && !busy
+                        {
+                            act = Act::Remove;
+                            ui.close();
+                        }
+                    });
+                    ui.add_space(8.0);
                     if style::primary_button_enabled(ui, !busy, "Launch").clicked() && !busy {
                         act = Act::Launch;
-                    }
-                    // Script installs have no update channel or GitHub tracking;
-                    // hiding those buttons avoids dead ends.
-                    let is_script = app.format == "installer script";
-                    if !is_script && ui.button("Update").clicked() && !busy {
-                        act = Act::Update;
-                    }
-                    if !is_script {
-                        if app.github_repo.is_some() {
-                            if style::ghost_button(ui, "Untrack").clicked() && !busy {
-                                act = Act::Untrack;
-                            }
-                        } else if style::ghost_button(ui, "Track…").clicked() && !busy {
-                            act = Act::Track;
-                        }
                     }
                 });
             });
