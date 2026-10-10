@@ -3,6 +3,7 @@
 //! Everything here is fully offline. Installs default to user scope
 //! (no root required).
 
+pub mod adopt;
 pub mod cleanup;
 pub mod desktop;
 pub mod detect;

@@ -257,6 +257,13 @@ pub struct ManagerApp {
     env_vars: Vec<(String, String)>,
     env_new_key: String,
     env_new_value: String,
+    // adopt existing game
+    adopt_dir: Option<std::path::PathBuf>,
+    adopt_scan: Option<dropin_core::adopt::AdoptScan>,
+    adopt_exe: Option<String>,
+    adopt_is_game: Option<bool>,
+    adopt_name: String,
+    adopt_error: Option<String>,
     // search/filter
     search: String,
     sort_by: SortBy,
@@ -314,6 +321,12 @@ impl ManagerApp {
             env_vars: Vec::new(),
             env_new_key: String::new(),
             env_new_value: String::new(),
+            adopt_dir: None,
+            adopt_scan: None,
+            adopt_exe: None,
+            adopt_is_game: None,
+            adopt_name: String::new(),
+            adopt_error: None,
             search: String::new(),
             sort_by: SortBy::Name,
             format_filter: None,
@@ -529,6 +542,10 @@ impl eframe::App for ManagerApp {
                         }
                     }
                 }
+                ui.add_space(12.0);
+                if !busy && style::ghost_button(ui, "Add existing game…").clicked() {
+                    self.start_adopt();
+                }
                 ui.add_space(4.0);
                 if style::secondary_button(ui, "Update all").clicked() && !busy {
                     self.run_op("Updating apps", || {
@@ -698,6 +715,10 @@ impl eframe::App for ManagerApp {
                                 self.spawn_installer(&path);
                             }
                         }
+                    }
+                    ui.add_space(12.0);
+                    if style::ghost_button(ui, "Add existing game…").clicked() {
+                        self.start_adopt();
                     }
                     ui.add_space(16.0);
                     style::faint_label(
@@ -911,6 +932,86 @@ impl ManagerApp {
             },
             Err(e) => self.status = format!("Couldn't open installer: {e}"),
         }
+    }
+
+    /// Start the "adopt existing game" flow: pick a directory, scan it.
+    fn start_adopt(&mut self) {
+        self.adopt_error = None;
+        if let Some(dir) = rfd::FileDialog::new()
+            .set_title("Choose the game folder")
+            .pick_folder()
+        {
+            match dropin_core::adopt::scan_dir(&dir) {
+                Ok(scan) => {
+                    if scan.executables.is_empty() && scan.desktop_files.is_empty() {
+                        self.adopt_error = Some(format!(
+                            "No executables found in {}. This doesn't look like a game.",
+                            dir.display()
+                        ));
+                        return;
+                    }
+                    // Default name from directory name.
+                    self.adopt_name = dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    // Default exe: the first (best guess) if only one, else None (user picks).
+                    self.adopt_exe = if scan.executables.len() == 1 {
+                        Some(scan.executables[0].clone())
+                    } else {
+                        None
+                    };
+                    // Default is_game for Windows: guess from name.
+                    self.adopt_is_game = None;
+                    self.adopt_dir = Some(dir);
+                    self.adopt_scan = Some(scan);
+                }
+                Err(e) => {
+                    self.adopt_error = Some(format!("Couldn't scan folder: {e}"));
+                }
+            }
+        }
+    }
+
+    /// Complete the adoption.
+    fn do_adopt(&mut self) {
+        let Some(dir) = self.adopt_dir.clone() else {
+            return;
+        };
+        let opts = dropin_core::adopt::AdoptOptions {
+            main_exe: self.adopt_exe.clone(),
+            is_game: self.adopt_is_game,
+            name: if self.adopt_name.trim().is_empty() {
+                None
+            } else {
+                Some(self.adopt_name.trim().to_string())
+            },
+        };
+        match dropin_core::adopt::adopt(&dir, &opts) {
+            Ok(outcome) => {
+                self.status = format!("Added {} to your library.", outcome.name);
+                self.adopt_dir = None;
+                self.adopt_scan = None;
+                self.adopt_exe = None;
+                self.adopt_is_game = None;
+                self.adopt_name.clear();
+                self.adopt_error = None;
+                self.refresh();
+            }
+            Err(e) => {
+                self.adopt_error = Some(format!("Couldn't add game: {e}"));
+            }
+        }
+    }
+
+    /// Cancel the adoption flow.
+    fn cancel_adopt(&mut self) {
+        self.adopt_dir = None;
+        self.adopt_scan = None;
+        self.adopt_exe = None;
+        self.adopt_is_game = None;
+        self.adopt_name.clear();
+        self.adopt_error = None;
     }
 
     fn app_card(&mut self, ui: &mut egui::Ui, app: &AppRow, busy: bool) {
@@ -1294,6 +1395,129 @@ impl ManagerApp {
             }
             if !open {
                 self.remove_name = None;
+            }
+        }
+
+        // ---- adopt existing game ----
+        if self.adopt_dir.is_some() {
+            let mut open = true;
+            let mut confirm = false;
+            let mut close = false;
+            // Clone for the closure (borrow checker).
+            let dir = self.adopt_dir.clone().unwrap();
+            let scan = self.adopt_scan.clone();
+            egui::Window::new("Add existing game")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(format!("Folder: {}", dir.display())).size(13.0));
+                    ui.add_space(8.0);
+
+                    // Name field.
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.adopt_name);
+                    });
+                    ui.add_space(8.0);
+
+                    if let Some(s) = scan {
+                        // Executable picker (if multiple).
+                        if s.executables.len() > 1 {
+                            ui.label("Main executable:");
+                            let mut selected = self.adopt_exe.clone().unwrap_or_default();
+                            egui::ComboBox::from_id_salt("adopt_exe")
+                                .selected_text(&selected)
+                                .show_ui(ui, |ui| {
+                                    for exe in &s.executables {
+                                        ui.selectable_value(&mut selected, exe.clone(), exe);
+                                    }
+                                });
+                            self.adopt_exe = Some(selected);
+                            ui.add_space(8.0);
+                        } else if let Some(exe) = s.executables.first() {
+                            ui.label(format!("Executable: {exe}"));
+                            ui.add_space(8.0);
+                        }
+
+                        // Windows game/app toggle.
+                        if s.has_exe {
+                            ui.label("This looks like a Windows game. How should it run?");
+                            ui.horizontal(|ui| {
+                                let mut is_game = self.adopt_is_game.unwrap_or(true);
+                                if ui.selectable_label(is_game, "Game (Proton)").clicked() {
+                                    is_game = true;
+                                }
+                                if ui.selectable_label(!is_game, "App (Wine)").clicked() {
+                                    is_game = false;
+                                }
+                                self.adopt_is_game = Some(is_game);
+                            });
+                            ui.add_space(8.0);
+                        }
+
+                        ui.label(format!(
+                            "Found {} executable{}.",
+                            s.executables.len(),
+                            if s.executables.len() == 1 { "" } else { "s" }
+                        ));
+                    }
+
+                    // Error display.
+                    if let Some(err) = &self.adopt_error {
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(err).color(style::color::BAD).size(13.0));
+                    }
+
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::ghost_button(ui, "Cancel").clicked() {
+                                close = true;
+                            }
+                            let can_adopt = self.adopt_exe.is_some()
+                                || self
+                                    .adopt_scan
+                                    .as_ref()
+                                    .map(|s| s.executables.len() == 1)
+                                    .unwrap_or(false);
+                            if style::primary_button_enabled(ui, can_adopt, "Add game").clicked() {
+                                confirm = true;
+                            }
+                        });
+                    });
+                });
+            if close {
+                open = false;
+            }
+            if confirm {
+                self.do_adopt();
+                // do_adopt clears adopt_dir on success; on error the dialog stays open.
+                if self.adopt_dir.is_none() {
+                    open = false;
+                }
+            }
+            if !open {
+                self.cancel_adopt();
+            }
+        }
+        // Show adopt errors even when dialog isn't open (e.g., scan failed).
+        if self.adopt_dir.is_none() {
+            if let Some(err) = self.adopt_error.clone() {
+                let mut dismiss = false;
+                egui::Window::new("Couldn't add game")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new(err).size(14.0));
+                        ui.add_space(12.0);
+                        if style::primary_button(ui, "OK").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                if dismiss {
+                    self.adopt_error = None;
+                }
             }
         }
 
