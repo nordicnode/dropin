@@ -6,6 +6,7 @@
 pub mod cleanup;
 pub mod desktop;
 pub mod detect;
+pub mod exe_icon;
 pub mod github;
 pub mod handlers;
 pub mod health;

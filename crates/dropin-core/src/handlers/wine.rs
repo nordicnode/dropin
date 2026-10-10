@@ -30,6 +30,20 @@ fn wine_bin() -> PathBuf {
     super::wine_setup::wine_binary().unwrap_or_else(|| PathBuf::from("wine"))
 }
 
+/// Extract the icon from a Windows executable and save it as PNG.
+/// Tries `exe` first, then falls back to `fallback` (the installer).
+/// Returns the saved icon path, or None when no icon could be extracted.
+pub fn extract_exe_icon(slug: &str, exe: &Path, fallback: &Path) -> Option<PathBuf> {
+    let png = crate::exe_icon::extract_icon_png(exe)
+        .or_else(|| crate::exe_icon::extract_icon_png(fallback))?;
+    let dest = UserDirs::new().icons.join(format!("dropin-{slug}.png"));
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).ok()?;
+    }
+    std::fs::write(&dest, &png).ok()?;
+    Some(dest)
+}
+
 pub fn plan(src: &Path) -> Result<InstallPlan> {
     let d = crate::detect::detect(src)?;
     // For planning, use the heuristic (the GUI lets the user override).
@@ -189,15 +203,23 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // Program Files.
     let exe = find_installed_exe(&prefix).unwrap_or(dest.clone());
 
+    // Extract the app's icon from the .exe so the menu entry shows it.
+    let icon_path = extract_exe_icon(&slug, &exe, &dest);
+    let icon_line = icon_path
+        .as_ref()
+        .map(|p| format!("Icon={}\n", p.display()))
+        .unwrap_or_default();
+
     // Menu entry that launches with the right runner.
     let desktop_path = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
     let desktop_text = match runner {
         super::proton::Runner::Wine => format!(
-            "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
+            "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\n{}Categories=Utility;\nTerminal=false\n",
             d.name_hint,
             prefix.display(),
             wine_bin().display(),
-            exe.display()
+            exe.display(),
+            icon_line
         ),
         super::proton::Runner::Proton => {
             let (env, argv) = super::proton::proton_launch_cmd(&prefix, &exe, &d.name_hint);
@@ -212,8 +234,8 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
                 .collect::<Vec<_>>()
                 .join(" ");
             format!(
-                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\nCategories=Game;\nTerminal=false\n",
-                d.name_hint,
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\n{}Categories=Game;\nTerminal=false\n",
+                d.name_hint, icon_line,
             )
         }
     };
@@ -225,7 +247,13 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     Ok(InstallOutcome {
         name: slug.clone(),
         version: None,
-        paths: vec![prefix.clone(), desktop_path],
+        paths: {
+            let mut p = vec![prefix.clone(), desktop_path];
+            if let Some(icon) = icon_path {
+                p.push(icon);
+            }
+            p
+        },
         install_root: Some(prefix),
         external: false,
         update_info: None,
@@ -292,15 +320,23 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
 
     let dirs = UserDirs::new();
     let desktop_path = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
+    // Keep the extracted icon if one was saved during install.
+    let icon_path = dirs.icons.join(format!("dropin-{slug}.png"));
+    let icon_line = if icon_path.exists() {
+        format!("Icon={}\n", icon_path.display())
+    } else {
+        String::new()
+    };
     let desktop_text = match runner {
         super::proton::Runner::Wine => {
             let wine = super::wine_setup::wine_binary().unwrap_or_else(|| PathBuf::from("wine"));
             format!(
-                "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\n{}Categories=Utility;\nTerminal=false\n",
                 inst.name,
                 prefix.display(),
                 wine.display(),
-                exe.display()
+                exe.display(),
+                icon_line
             )
         }
         super::proton::Runner::Proton => {
@@ -316,8 +352,8 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
                 .collect::<Vec<_>>()
                 .join(" ");
             format!(
-                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\nCategories=Game;\nTerminal=false\n",
-                inst.name,
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\n{}Categories=Game;\nTerminal=false\n",
+                inst.name, icon_line,
             )
         }
     };
