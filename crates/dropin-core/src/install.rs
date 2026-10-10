@@ -468,6 +468,12 @@ pub fn rollback(name: &str) -> Result<String> {
             let ver_name = prev_ver.file_name().and_then(|n| n.to_str()).unwrap_or("previous");
             ledger.clear_version(&slug).ok();
             return Ok(format!("rolled back to generation {ver_name}"));
+        } else {
+            // Only one generation installed: nothing to roll back to.
+            return Err(Error::NotInstalled(format!(
+                "no previous version of {} to roll back to",
+                inst.name
+            )));
         }
     }
 
@@ -917,4 +923,73 @@ pub fn doctor() -> Vec<(String, bool, String)> {
     // Mark the first row by whether ensure succeeded.
     rows[0].1 = dirs.data.exists();
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_flat_to_generations() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let d = std::env::temp_dir().join(format!("dropin-mig-{}-{nanos}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let dirs = UserDirs::new();
+            dirs.ensure().unwrap();
+            // Fake legacy flat install.
+            let flat = dirs.applications.join("OldApp.AppImage");
+            std::fs::write(&flat, b"fake").unwrap();
+            let desktop = dirs.desktop_entries.join("dropin-oldapp.desktop");
+            std::fs::write(
+                &desktop,
+                "[Desktop Entry]\nName=OldApp\nExec=/old/path/OldApp.AppImage --flag\n",
+            )
+            .unwrap();
+            let ledger = Ledger::open().unwrap();
+            ledger
+                .record(&crate::ledger::NewInstall {
+                    name: "oldapp".into(),
+                    format: "AppImage".into(),
+                    version: Some("1.0".into()),
+                    source_path: PathBuf::from("/tmp/OldApp.AppImage"),
+                    files: vec![flat.clone(), desktop.clone()],
+                    ..Default::default()
+                })
+                .unwrap();
+
+            let inst = ledger.get("oldapp").unwrap();
+            migrate_to_generations(&inst, &dirs).unwrap();
+
+            // Flat file moved into version dir.
+            assert!(!flat.exists(), "flat file gone");
+            let ver_file = dirs.applications.join("oldapp/1.0/OldApp.AppImage");
+            assert!(ver_file.exists(), "in version dir");
+            // Active symlink points at it.
+            let active = dirs.applications.join("oldapp/active");
+            assert!(active.is_symlink());
+            // Desktop Exec rewritten to active, args preserved.
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(
+                text.contains(&format!("Exec={} --flag", active.display())),
+                "Exec rewritten: {text}"
+            );
+            // Ledger tracks the app dir now, not the flat file.
+            let inst2 = ledger.get("oldapp").unwrap();
+            assert!(
+                inst2.files.iter().any(|f| f.ends_with("oldapp")),
+                "app dir tracked: {:?}",
+                inst2.files
+            );
+            assert!(
+                !inst2.files.iter().any(|f| f.ends_with("OldApp.AppImage")),
+                "flat file untracked"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

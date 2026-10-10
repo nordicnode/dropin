@@ -318,6 +318,11 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
         let s = root.to_string_lossy().to_string();
         cmd.args(["--bind", &s, &s]);
     }
+    // The installer file itself must be visible inside the sandbox.
+    // (Bound before /tmp goes tmpfs, in case it lives there.)
+    if let Some(src_s) = src.to_str() {
+        cmd.args(["--ro-bind", src_s, src_s]);
+    }
     // Hide secrets even from reading. (After the binds: later mounts win.)
     cmd.args(["--tmpfs", &format!("{home_s}/.ssh")]);
     cmd.args(["--tmpfs", &format!("{home_s}/.gnupg")]);
@@ -643,9 +648,15 @@ pub fn undo_install(slug: &str) -> Result<String> {
 
 /// Explain a finished script install without jargon.
 pub fn describe_report(app: &str, r: &ScriptReport) -> String {
+    // Empty when the GUI couldn't recover the name; fall back gracefully.
+    let title = if app.is_empty() {
+        "The installer".to_string()
+    } else {
+        format!("“{app}”")
+    };
     let mut lines: Vec<String> = Vec::new();
     if r.success {
-        lines.push(format!("“{app}” installed successfully."));
+        lines.push(format!("{title} installed successfully."));
         if !r.added.is_empty() {
             lines.push(format!(
                 "It added {} new file{} to your install folders.",
@@ -667,13 +678,13 @@ pub fn describe_report(app: &str, r: &ScriptReport) -> String {
         }
         if !r.removed.is_empty() || !r.modified.is_empty() {
             lines.push(format!(
-                "It also changed {} existing file{} — removing “{app}” will put everything back.",
+                "It also changed {} existing file{} — removing {title} will put everything back.",
                 r.removed.len() + r.modified.len(),
                 if r.removed.len() + r.modified.len() == 1 { "" } else { "s" }
             ));
         }
     } else {
-        lines.push(format!("“{app}” didn't finish installing."));
+        lines.push(format!("{title} didn't finish installing."));
         if let Some(hint) = &r.failure_hint {
             lines.push(hint.clone());
         } else {

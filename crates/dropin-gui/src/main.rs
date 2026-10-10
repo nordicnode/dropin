@@ -173,11 +173,11 @@ impl DropinApp {
                 }
                 Err(e) => {
                     // Even failed script installs leave a report with the
-                    // plain-language failure hint. Recover the slug from the
-                    // file name.
-                    let slug = dropin_core::slugify(
-                        file.file_stem().and_then(|s| s.to_str()).unwrap_or("app"),
-                    );
+                    // plain-language failure hint. Recover the slug the same
+                    // way the installer computes it (detection + slugify).
+                    let slug = detect::detect(&file)
+                        .map(|d| dropin_core::slugify(&d.name_hint))
+                        .unwrap_or_else(|_| "app".into());
                     InstallResult {
                         ok: false,
                         message: format!("Install failed:\n{e}"),
