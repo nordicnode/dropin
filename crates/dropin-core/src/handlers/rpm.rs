@@ -495,7 +495,11 @@ mod tests {
 
     #[test]
     fn install_remove_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("dropin-rpmi-{}", std::process::id()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("dropin-rpmi-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let home = dir.join("home");
         crate::test_env::with_home(&home, || {

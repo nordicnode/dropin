@@ -48,7 +48,7 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
-    /// Restore an AppImage to its pre-update snapshot.
+    /// Restore an AppImage to its previous installed version.
     Rollback {
         /// Name of the app to roll back.
         name: String,
