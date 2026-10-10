@@ -5,7 +5,7 @@
 //! Long operations run on background threads; the UI polls them and
 //! refreshes the app list when they finish.
 
-use dropin_core::{health, install};
+use dropin_core::{health, install, integrate, settings};
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
@@ -63,6 +63,11 @@ pub struct ManagerApp {
     doctor_open: bool,
     doctor_issues: Vec<health::HealthIssue>,
     install_child: Option<std::process::Child>,
+    /// First-run: offer one-click desktop integration.
+    show_welcome: bool,
+    settings: settings::Settings,
+    settings_open: bool,
+    auto_checked: bool,
 }
 
 impl ManagerApp {
@@ -79,7 +84,44 @@ impl ManagerApp {
             doctor_open: false,
             doctor_issues: Vec::new(),
             install_child: None,
+            show_welcome: !integrate::is_integrated(),
+            settings: settings::load(),
+            settings_open: false,
+            auto_checked: false,
         }
+    }
+
+    /// Background update check that also pops a desktop notification when
+    /// something can be updated.
+    fn auto_check(&mut self) {
+        self.auto_checked = true;
+        if self.apps.is_empty() {
+            return;
+        }
+        self.run_op("Checking for updates", || {
+            let (message, updates) = match install::update(None, true) {
+                Ok(reports) => {
+                    let n = reports
+                        .iter()
+                        .filter(|r| {
+                            matches!(r.status, install::UpdateStatus::Updated(_))
+                        })
+                        .count();
+                    (fmt_reports(reports), n)
+                }
+                Err(e) => (format!("Update check failed: {e}"), 0),
+            };
+            if updates > 0 {
+                let _ = notify_rust::Notification::new()
+                    .summary("dropin")
+                    .body(&format!(
+                        "{updates} update{} available — open dropin to install.",
+                        if updates == 1 { "" } else { "s" }
+                    ))
+                    .show();
+            }
+            OpDone { message, refresh_apps: true }
+        });
     }
 
     /// Run `f` on a background thread; the UI stays responsive.
@@ -144,6 +186,22 @@ fn fmt_reports(reports: Vec<install::UpdateReport>) -> String {
 impl eframe::App for ManagerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+
+        // Drag-and-drop: files dropped on the window open install dialogs.
+        let dropped: Vec<PathBuf> = ctx
+            .input(|i| i.raw.dropped_files.clone())
+            .into_iter()
+            .filter_map(|f| f.path)
+            .collect();
+        for path in dropped {
+            self.spawn_installer(&path);
+        }
+
+        // Automatic update check on launch (once, in the background).
+        if !self.auto_checked && self.settings.auto_check_updates {
+            self.auto_check();
+        }
+
         let busy = self.busy.is_some();
 
         // ---- toolbar ----
@@ -171,6 +229,9 @@ impl eframe::App for ManagerApp {
                 if ui.button("Doctor").clicked() && !busy {
                     self.doctor_issues = health::check();
                     self.doctor_open = true;
+                }
+                if ui.button("Settings").clicked() {
+                    self.settings_open = true;
                 }
             });
         });
@@ -304,6 +365,46 @@ impl ManagerApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context, busy: bool) {
+        // ---- first-run welcome / one-click setup ----
+        if self.show_welcome {
+            let mut open = true;
+            let mut setup = false;
+            let mut close = false;
+            egui::Window::new("Welcome to dropin")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Download it. Double-click it. Done.");
+                    ui.add_space(8.0);
+                    ui.label("Set up dropin so double-clicking any installer file\njust works, and apps get menu entries?");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Set up dropin").clicked() {
+                            setup = true;
+                        }
+                        if ui.button("Later").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if close {
+                open = false;
+            }
+            if setup {
+                self.run_op("Setting up", || {
+                    let message = integrate::integrate(true)
+                        .map(|_| "dropin is set up — double-click any installer file.".to_string())
+                        .unwrap_or_else(|e| format!("Setup failed: {e}"));
+                    OpDone { message, refresh_apps: false }
+                });
+                open = false;
+            }
+            if !open {
+                self.show_welcome = false;
+            }
+        }
+
         // ---- track dialog ----
         if let Some(name) = self.track_name.clone() {
             let mut open = true;
@@ -420,6 +521,28 @@ impl ManagerApp {
             }
             if !open {
                 self.rollback_name = None;
+            }
+        }
+
+        // ---- settings ----
+        if self.settings_open {
+            let mut open = true;
+            egui::Window::new("Settings")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    if ui
+                        .checkbox(&mut self.settings.auto_check_updates, "Check for updates when dropin opens")
+                        .changed()
+                    {
+                        let _ = settings::save(&self.settings);
+                    }
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("dropin never phones home on its own —\nchecks only run when you open the manager.").weak());
+                });
+            if !open {
+                self.settings_open = false;
             }
         }
 

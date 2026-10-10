@@ -2,7 +2,7 @@
 //! for Dolphin, Nemo, Nautilus, and Thunar, plus the double-click MIME
 //! registration. Everything is user-scoped and fully reversible.
 
-use dropin_core::{Result, UserDirs};
+use crate::{Result, UserDirs};
 use std::path::PathBuf;
 
 /// MIME types dropin-gui claims for double-click.
@@ -48,7 +48,7 @@ fn gui_exe() -> PathBuf {
 fn config_home() -> PathBuf {
     std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dropin_core::home_dir().join(".config"))
+        .unwrap_or_else(|_| crate::home_dir().join(".config"))
 }
 
 fn all_context_mimes() -> String {
@@ -72,6 +72,13 @@ fn write_file(path: &PathBuf, content: &str) -> Result<()> {
 
 fn remove_file(path: &PathBuf) {
     let _ = std::fs::remove_file(path);
+}
+
+/// True when the MIME handler registration looks done (the marker file
+/// `integrate(true)` writes exists). Used by the GUI's first-run prompt.
+pub fn is_integrated() -> bool {
+    let dirs = UserDirs::new();
+    dirs.desktop_entries.join("dropin-gui.desktop").exists()
 }
 
 pub fn integrate(enable: bool) -> Result<()> {
@@ -165,7 +172,7 @@ fn mime_registration_remove(dirs: &UserDirs) {
 // ---------------------------------------------------------------------------
 
 fn dolphin(enable: bool) -> Result<()> {
-    let path = dropin_core::home_dir().join(".local/share/kio/servicemenus/dropin-install.desktop");
+    let path = crate::home_dir().join(".local/share/kio/servicemenus/dropin-install.desktop");
     if !enable {
         remove_file(&path);
         return Ok(());
@@ -196,7 +203,7 @@ fn dolphin(enable: bool) -> Result<()> {
 
 fn nemo(enable: bool) -> Result<()> {
     let path =
-        dropin_core::home_dir().join(".local/share/nemo/actions/dropin-install.nemo_action");
+        crate::home_dir().join(".local/share/nemo/actions/dropin-install.nemo_action");
     if !enable {
         remove_file(&path);
         return Ok(());
@@ -225,7 +232,7 @@ fn nemo(enable: bool) -> Result<()> {
 
 fn nautilus(enable: bool) -> Result<()> {
     let path =
-        dropin_core::home_dir().join(".local/share/nautilus-python/extensions/dropin.py");
+        crate::home_dir().join(".local/share/nautilus-python/extensions/dropin.py");
     if !enable {
         remove_file(&path);
         // Nautilus byte-compiles extensions on load; don't leave ours behind.

@@ -5,7 +5,6 @@ use dropin_core::handlers::InstallOptions;
 use dropin_core::{detect, install};
 use std::path::PathBuf;
 
-mod integrate;
 
 #[derive(Parser)]
 #[command(name = "dropin", version, about = "Download it. Double-click it. Done.")]
@@ -226,8 +225,8 @@ fn run() -> dropin_core::Result<()> {
             }
             Ok(())
         }
-        Cmd::Integrate => integrate::integrate(true),
-        Cmd::Unintegrate => integrate::integrate(false),
+        Cmd::Integrate => dropin_core::integrate::integrate(true),
+        Cmd::Unintegrate => dropin_core::integrate::integrate(false),
     }
 }
 
