@@ -282,6 +282,10 @@ pub fn run_with_proton(
 
     let gameid = resolve_gameid(game_title);
 
+    // Capture output to a log file so we can diagnose crashes.
+    let log_path = prefix.join("proton-last-run.log");
+    let stdout_log = std::fs::File::create(&log_path).ok();
+
     let mut cmd = std::process::Command::new(&umu);
     cmd.env("WINEPREFIX", prefix);
     cmd.env("GAMEID", &gameid);
@@ -294,19 +298,103 @@ pub fn run_with_proton(
         cmd.env(k, v);
     }
     cmd.arg(exe);
+    cmd.stdin(std::process::Stdio::null());
 
-    let status = cmd
-        .stdin(std::process::Stdio::null())
-        .status()
+    // Stdout goes to the log file (or inherit if we can't create it).
+    // Stderr is piped so we can diagnose failures.
+    match stdout_log {
+        Some(f) => {
+            cmd.stdout(std::process::Stdio::from(f));
+        }
+        None => {
+            cmd.stdout(std::process::Stdio::inherit());
+        }
+    }
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Command(format!("umu-run failed to start: {e}")))?;
+
+    // Drain stderr in a background thread to avoid pipe deadlock on
+    // long-running games with verbose output. We keep the text for
+    // diagnosing crashes.
+    let stderr_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let stderr_clone = stderr_text.clone();
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut reader = std::io::BufReader::new(stderr);
+            let mut buf = String::new();
+            let _ = reader.read_to_string(&mut buf);
+            if let Ok(mut guard) = stderr_clone.lock() {
+                *guard = buf;
+            }
+        })
+    });
+
+    let status = child
+        .wait()
         .map_err(|e| Error::Command(format!("umu-run failed: {e}")))?;
 
+    // Collect the stderr text (thread has finished since the process exited).
+    let stderr_str = stderr_handle
+        .map(|h| {
+            let _ = h.join();
+            stderr_text.lock().map(|g| g.clone()).unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    // Append stderr to the log file for completeness.
+    if !stderr_str.is_empty() {
+        use std::io::Write;
+        if let Ok(mut log) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+            let _ = writeln!(log, "\n--- stderr ---\n{stderr_str}");
+        }
+    }
+
     if !status.success() {
+        let code = status.code().unwrap_or(-1);
+        // Diagnose common failure modes from the captured output.
+        let hint = diagnose_proton_failure(&stderr_str, code);
         return Err(Error::Command(format!(
-            "the game exited with status {}",
-            status.code().unwrap_or(-1)
+            "the game exited with status {code}{hint}\n\nFull log: {}",
+            log_path.display()
         )));
     }
     Ok(())
+}
+
+/// Analyze Proton/game output for known failure patterns and suggest fixes.
+fn diagnose_proton_failure(stderr: &str, code: i32) -> String {
+    // GLX/OpenGL context creation failure — broken graphics drivers.
+    if stderr.contains("X_GLXCreateContext")
+        || stderr.contains("BadValue")
+        || stderr.contains("failed to create dri2 screen")
+    {
+        return "\n\nThis looks like a graphics driver problem: the game couldn't create an OpenGL context. \
+            If you have an NVIDIA GPU, make sure the proprietary drivers are installed (not just Mesa). \
+            You can also try launching with software rendering as a test.".into();
+    }
+    // Vulkan/DXVK issues.
+    if stderr.contains("vulkan")
+        && (stderr.contains("failed") || stderr.contains("not found") || stderr.contains("ERROR"))
+    {
+        return "\n\nVulkan isn't working properly. Try installing Vulkan drivers for your GPU, \
+            or set PROTON_USE_WINED3D=1 to use Wine's OpenGL renderer instead of DXVK."
+            .into();
+    }
+    // Missing prefix or corrupted install.
+    if stderr.contains("unable to use parent for game drive") {
+        return "\n\nProton had trouble setting up the game drive. This can happen with unusual install paths. \
+            Try removing and reinstalling the game.".into();
+    }
+    // Generic: point to the log.
+    if code == 53 {
+        return "\n\nThe game crashed on startup (status 53). Check the log file above for details, \
+            or try verifying the game files.".into();
+    }
+    String::new()
 }
 
 /// Build the launch command for a Proton game (for .desktop entries).
@@ -357,5 +445,27 @@ mod tests {
     #[test]
     fn urlencode_works() {
         assert_eq!(urlencode("The Witcher 3"), "The+Witcher+3");
+    }
+
+    #[test]
+    fn diagnose_detects_glx_failure() {
+        let stderr = "X Error of failed request: BadValue\nMajor opcode: 150 (GLX)\nMinor opcode: 3 (X_GLXCreateContext)";
+        let hint = diagnose_proton_failure(stderr, 53);
+        assert!(hint.contains("graphics driver"));
+        assert!(hint.contains("NVIDIA"));
+    }
+
+    #[test]
+    fn diagnose_detects_vulkan_failure() {
+        let stderr = "vulkan: failed to initialize\nERROR: no Vulkan devices found";
+        let hint = diagnose_proton_failure(stderr, 1);
+        assert!(hint.contains("Vulkan"));
+        assert!(hint.contains("PROTON_USE_WINED3D"));
+    }
+
+    #[test]
+    fn diagnose_empty_for_unknown() {
+        let hint = diagnose_proton_failure("some random output", 1);
+        assert!(hint.is_empty());
     }
 }
