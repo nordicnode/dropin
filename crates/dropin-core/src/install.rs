@@ -451,7 +451,13 @@ pub fn rollback(name: &str) -> Result<String> {
             }));
             let prev_idx = match idx {
                 Some(i) if i > 0 => i - 1,
-                _ => vers.len() - 2, // assume latest is active
+                Some(_) => {
+                    return Err(Error::NotInstalled(format!(
+                        "{} is already at its oldest installed version",
+                        inst.name
+                    )))
+                }
+                None => vers.len() - 2, // can't tell what's active; assume latest
             };
             let prev_ver = &vers[prev_idx];
             // Find the AppImage inside the previous generation.
