@@ -87,10 +87,6 @@ enum Cmd {
         runner: String,
     },
     /// Register dropin with the desktop: double-click handling plus
-    /// “Install as application” in Dolphin, Nemo, Nautilus, and Thunar.
-    Integrate,
-    /// Remove all desktop and file-manager integration.
-    Unintegrate,
     /// Launch an installed app.
     Launch {
         /// Name of the app to launch.
@@ -338,8 +334,6 @@ fn run() -> dropin_core::Result<()> {
                 Err(e) => Err(e),
             }
         }
-        Cmd::Integrate => dropin_core::integrate::integrate(true),
-        Cmd::Unintegrate => dropin_core::integrate::integrate(false),
         Cmd::Launch { name } => {
             let msg = install::launch(&name)?;
             println!("{msg}");

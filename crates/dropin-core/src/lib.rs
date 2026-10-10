@@ -12,7 +12,6 @@ pub mod github;
 pub mod handlers;
 pub mod health;
 pub mod install;
-pub mod integrate;
 pub mod ledger;
 pub mod settings;
 pub mod signatures;

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/dropin-core", "crates/dropin-cli", "crates/dropin-gui"]
+members = ["crates/dropin-core", "crates/dropin-cli"]
 resolver = "2"
 
 [workspace.dependencies]

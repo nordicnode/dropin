@@ -106,26 +106,18 @@ For AppImages from GitHub releases with no zsync channel, `dropin track <name> -
 
 - **Static audit first.** Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo. No jargon.
 - **Sandboxed execution.** Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn't installed, dropin refuses rather than running unsandboxed.
-- **Full logging.** Every byte of installer output is logged to `~/.local/share/dropin/script-logs/`, viewable from the GUI.
+- **Full logging.** Every byte of installer output is logged to `~/.local/share/dropin/script-logs/`.
 - **Complete undo.** Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted, with a plain-language summary of what was undone.
-
-The GUI shows the audit findings, lets you allow internet for that install only, and offers one-click retry with internet if a blocked download was the failure.
 
 ## Install
 
 ```sh
 cargo install --git https://github.com/nordicnode/dropin dropin-cli
-cargo install --git https://github.com/nordicnode/dropin dropin-gui   # the double-click dialog
-dropin integrate   # adds "Install as application" to Dolphin, Nemo, Nautilus & Thunar
 ```
-
-Then just double-click any installer file.
 
 ## Usage
 
-The GUI is the whole app. Open **dropin** from your app menu (or run `dropin-gui`) and you get the manager: your installed apps, updates, rollback, removal, GitHub release tracking, and doctor. No terminal needed. Double-clicking an installer file opens the install dialog directly. `dropin integrate` sets all of that up, plus the file manager entries.
-
-There's also a CLI that does the same things, handy for scripting:
+dropin is a command-line tool. Everything is done via `dropin` subcommands:
 
 ```text
 dropin list               # everything dropin installed (✓ = checksum-verified)
@@ -150,8 +142,6 @@ dropin integrate          # double-click plus file-manager plus menu integration
 dropin unintegrate        # remove all desktop integration
 ```
 
-The manager GUI (`dropin-gui`, or just **dropin** in your app menu) does all of this visually: drag-and-drop install, per-app launch/update/rollback/remove, environment variables, GitHub tracking, doctor, and settings. Search to filter the list, select multiple apps for bulk update/remove, and export your app list for backup. It can also check for updates automatically when it opens (opt-in, in settings).
-
 ## Why not…
 
 | | dropin | AppImageLauncher | exeify | your package manager |
@@ -167,7 +157,7 @@ The closest thing out there is [exeify](https://github.com/scdouglas1999/exeify)
 ## Principles
 
 - **Your home directory is yours.** Dropin installs to user scope and never asks for root unless you explicitly choose a system install.
-- **Show before doing.** The GUI dialog and `dropin info` always lay out the plan first. Installer scripts need your explicit okay.
+- **Show before doing.** `dropin info` always lays out the plan first. Installer scripts need your explicit okay.
 - **Fully offline core.** No AI, no accounts, no telemetry, no phoning home. The only network use is what you explicitly approve: GitHub release checks for apps you choose to track (only when you open the manager, ETag-cached, toggleable), and one-time internet access for a sandboxed installer when you allow it.
 - **Rootless by default.** Scripts run sandboxed without admin rights; system installs are opt-in.
 - **Honest about limits.** If dropin can't update something automatically, it says so instead of pretending.
