@@ -150,6 +150,24 @@ pub fn tools_menu_button<R>(
     ui.menu_button(egui::RichText::new("…").size(20.0).strong(), add_contents)
 }
 
+/// A dropdown button with vertically centered text, for filter rows.
+/// egui's ComboBox can render text slightly high; this uses a plain
+/// Button with explicit centering for pixel-perfect alignment.
+pub fn filter_dropdown<R>(
+    ui: &mut egui::Ui,
+    selected_text: &str,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    let button_text = format!("{selected_text}  v");
+    let resp = ui.add_sized(
+        [width, 32.0],
+        egui::Button::new(egui::RichText::new(button_text).size(14.0)).corner_radius(8.0),
+    );
+    let inner = egui::Popup::menu(&resp).show(add_contents);
+    egui::InnerResponse::new(inner.map(|i| i.inner), resp)
+}
+
 /// A small pill badge, e.g. the format tag or version.
 pub fn badge(ui: &mut egui::Ui, text: &str, bg: egui::Color32) {
     egui::Frame::NONE

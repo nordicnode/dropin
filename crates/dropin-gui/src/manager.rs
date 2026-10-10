@@ -772,28 +772,20 @@ impl eframe::App for ManagerApp {
                     ui.add_space(avail - right_width);
                 }
                 ui.horizontal(|ui| {
-                    // Select mode toggle, vertically centered to match the dropdowns.
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(70.0, 32.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            if ui.checkbox(&mut self.select_mode, "Select").changed()
-                                && !self.select_mode
-                            {
-                                self.selected.clear();
-                            }
-                        },
-                    );
+                    // Select mode toggle.
+                    if ui.checkbox(&mut self.select_mode, "Select").changed()
+                        && !self.select_mode
+                    {
+                        self.selected.clear();
+                    }
                     ui.add_space(8.0);
                     // Sort.
-                    egui::ComboBox::from_id_salt("sort_by")
-                        .selected_text(self.sort_by.label())
-                        .width(120.0)
-                        .show_ui(ui, |ui| {
-                            for opt in [SortBy::Name, SortBy::Size, SortBy::Recent] {
-                                ui.selectable_value(&mut self.sort_by, opt, opt.label());
-                            }
-                        });
+                    let sort_label = self.sort_by.label().to_string();
+                    style::filter_dropdown(ui, &sort_label, 120.0, |ui| {
+                        for opt in [SortBy::Name, SortBy::Size, SortBy::Recent] {
+                            ui.selectable_value(&mut self.sort_by, opt, opt.label());
+                        }
+                    });
                     ui.add_space(8.0);
                     // Format filter.
                     let mut formats: Vec<String> = self
@@ -804,25 +796,28 @@ impl eframe::App for ManagerApp {
                         .into_iter()
                         .collect();
                     formats.sort();
-                    egui::ComboBox::from_id_salt("format_filter")
-                        .selected_text(self.format_filter.as_deref().unwrap_or("All formats"))
-                        .width(120.0)
-                        .show_ui(ui, |ui| {
+                    let format_label = self
+                        .format_filter
+                        .as_deref()
+                        .unwrap_or("All formats")
+                        .to_string();
+                    let formats_clone = formats.clone();
+                    style::filter_dropdown(ui, &format_label, 120.0, |ui| {
+                        if ui
+                            .selectable_value(&mut self.format_filter, None, "All formats")
+                            .clicked()
+                        {
+                            self.selected.clear();
+                        }
+                        for f in &formats_clone {
                             if ui
-                                .selectable_value(&mut self.format_filter, None, "All formats")
+                                .selectable_value(&mut self.format_filter, Some(f.clone()), f)
                                 .clicked()
                             {
                                 self.selected.clear();
                             }
-                            for f in &formats {
-                                if ui
-                                    .selectable_value(&mut self.format_filter, Some(f.clone()), f)
-                                    .clicked()
-                                {
-                                    self.selected.clear();
-                                }
-                            }
-                        });
+                        }
+                    });
                     // Category filter (only when useful).
                     let mut categories: Vec<String> = self
                         .apps
@@ -834,35 +829,36 @@ impl eframe::App for ManagerApp {
                     categories.sort();
                     if categories.len() > 1 {
                         ui.add_space(8.0);
-                        egui::ComboBox::from_id_salt("category_filter")
-                            .selected_text(
-                                self.category_filter.as_deref().unwrap_or("All categories"),
-                            )
-                            .width(120.0)
-                            .show_ui(ui, |ui| {
+                        let cat_label = self
+                            .category_filter
+                            .as_deref()
+                            .unwrap_or("All categories")
+                            .to_string();
+                        let cats_clone = categories.clone();
+                        style::filter_dropdown(ui, &cat_label, 120.0, |ui| {
+                            if ui
+                                .selectable_value(
+                                    &mut self.category_filter,
+                                    None,
+                                    "All categories",
+                                )
+                                .clicked()
+                            {
+                                self.selected.clear();
+                            }
+                            for c in &cats_clone {
                                 if ui
                                     .selectable_value(
                                         &mut self.category_filter,
-                                        None,
-                                        "All categories",
+                                        Some(c.clone()),
+                                        c,
                                     )
                                     .clicked()
                                 {
                                     self.selected.clear();
                                 }
-                                for c in &categories {
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.category_filter,
-                                            Some(c.clone()),
-                                            c,
-                                        )
-                                        .clicked()
-                                    {
-                                        self.selected.clear();
-                                    }
-                                }
-                            });
+                            }
+                        });
                     }
                 });
             });
