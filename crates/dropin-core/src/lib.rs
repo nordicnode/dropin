@@ -151,6 +151,19 @@ pub fn slugify(name: &str) -> String {
 /// "vesktop-1.5.9-x86_64" -> "vesktop", "foo_2.0_amd64" -> "foo".
 pub fn clean_name(stem: &str) -> String {
     let mut s = stem.to_string();
+    // Strip a trailing "(arch)" parenthetical: "My App (x86_64)" -> "My App".
+    // Do it once up front; the loop below handles the rest.
+    if let Some(open) = s.rfind('(') {
+        if s.ends_with(')') {
+            let inner = s[open + 1..s.len() - 1].to_lowercase();
+            if ["x86_64", "amd64", "aarch64", "arm64", "x64", "i386", "i686"]
+                .contains(&inner.as_str())
+            {
+                s.truncate(open);
+                s = s.trim_end().to_string();
+            }
+        }
+    }
     // Repeatedly strip trailing version/arch tokens.
     loop {
         let lower = s.to_lowercase();

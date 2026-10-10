@@ -306,10 +306,27 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
         cmd.arg("--unshare-net");
     }
     cmd.args(["--die-with-parent", "--new-session"]);
-    // Base system, read-only. Symlinks cover usr-merged distros.
+    // Base system, read-only.
     cmd.args(["--ro-bind", "/usr", "/usr"]);
-    for (link, target) in [("/bin", "usr/bin"), ("/lib", "usr/lib"), ("/lib64", "usr/lib64"), ("/sbin", "usr/sbin"), ("/lib32", "usr/lib32")] {
-        cmd.args(["--symlink", target, link]);
+    // /bin, /lib, etc: on usr-merged distros these are symlinks into /usr;
+    // on older distros they're real directories. Mirror the host: symlink
+    // where the host symlinks, bind where the host has real dirs.
+    for link in ["/bin", "/lib", "/lib64", "/sbin", "/lib32"] {
+        let host = std::path::Path::new(link);
+        if host.is_symlink() {
+            if let Ok(target) = std::fs::read_link(host) {
+                if let Some(t) = target.to_str() {
+                    cmd.args(["--symlink", t, link]);
+                    continue;
+                }
+            }
+        }
+        if host.is_dir() {
+            if let Some(h) = host.to_str() {
+                cmd.args(["--ro-bind", h, h]);
+            }
+        }
+        // If it doesn't exist on the host (e.g. /lib32), skip it.
     }
     cmd.args(["--ro-bind", "/etc", "/etc"]);
     // HOME read-only, then punch writable holes for the install folders.

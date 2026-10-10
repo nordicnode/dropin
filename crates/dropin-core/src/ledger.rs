@@ -39,10 +39,35 @@ impl Ledger {
         let dirs = UserDirs::new();
         dirs.ensure()?;
         let path = dirs.data.join("ledger.db");
+        // If the database is corrupted, back it up and start fresh rather
+        // than refusing to run at all.
+        if path.exists() {
+            if let Err(e) = Self::check_integrity(&path) {
+                let backup = dirs.data.join(format!(
+                    "ledger.db.corrupt-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ));
+                let _ = std::fs::rename(&path, &backup);
+                eprintln!(
+                    "dropin: install database was corrupted ({e}); backed up to {} and starting fresh",
+                    backup.display()
+                );
+            }
+        }
         let conn = Connection::open(path)?;
         let ledger = Self { conn };
         ledger.init()?;
         Ok(ledger)
+    }
+
+    /// Quick integrity check: can we open and query the database?
+    fn check_integrity(path: &std::path::Path) -> Result<()> {
+        let conn = Connection::open(path)?;
+        conn.query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))?;
+        Ok(())
     }
 
     /// Open a ledger at an explicit path (tests).
