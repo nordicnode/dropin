@@ -472,18 +472,20 @@ fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
         }
         ui.add_space(8.0);
         ui.label(script::describe_report(&res.app_name, rep));
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(format!(
-                "{} added, {} removed, {} changed — removing “{}” undoes it all.",
-                rep.added.len(),
-                rep.removed.len(),
-                rep.modified.len(),
-                res.app_name,
-            ))
-            .weak()
-            .small(),
-        );
+        if rep.success {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} added, {} removed, {} changed — removing “{}” undoes it all.",
+                    rep.added.len(),
+                    rep.removed.len(),
+                    rep.modified.len(),
+                    res.app_name,
+                ))
+                .weak()
+                .small(),
+            );
+        }
         // Retry with internet when the failure smells like a blocked network.
         let net_hint = !rep.net_allowed
             && rep

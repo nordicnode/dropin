@@ -89,7 +89,7 @@ fn looks_like_flatpakref(path: &Path) -> bool {
 pub fn detect(path: &Path) -> Result<Detection> {
     if !path.is_file() {
         return Err(Error::Unsupported(format!(
-            "not a file: {}",
+            "no such file: {} (info and install take a file path, not an app name)",
             path.display()
         )));
     }

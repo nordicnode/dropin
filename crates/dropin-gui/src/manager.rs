@@ -116,7 +116,7 @@ impl ManagerApp {
                 let _ = notify_rust::Notification::new()
                     .summary("dropin")
                     .body(&format!(
-                        "{updates} update{} available — open dropin to install.",
+                        "{updates} app{} updated.",
                         if updates == 1 { "" } else { "s" }
                     ))
                     .show();

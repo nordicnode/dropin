@@ -94,6 +94,24 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         .map(str::trim)
         .find(|m| m.starts_with("data.tar"))
         .ok_or_else(|| Error::Unsupported("no data.tar.* in deb".into()))?;
+    // tar needs the matching decompressor installed (zstd, xz, ...).
+    let need = if data_member.ends_with(".zst") {
+        Some("zstd")
+    } else if data_member.ends_with(".xz") {
+        Some("xz")
+    } else if data_member.ends_with(".bz2") {
+        Some("bzip2")
+    } else {
+        None
+    };
+    if let Some(tool) = need {
+        if !crate::have(tool) {
+            return Err(Error::Refused(format!(
+                "this .deb is compressed with {tool}, which isn't installed — \
+                 install it (e.g. `apt install {tool}`) and try again"
+            )));
+        }
+    }
     // Dump the member to a temp file: tar sniffs compression reliably from a
     // file, but not always from a pipe.
     let tmp = std::env::temp_dir().join(format!("dropin-data-{}", std::process::id()));
