@@ -126,7 +126,7 @@ fn payload_bytes(path: &Path, meta: &RpmMeta) -> Result<Vec<u8>> {
                     "this RPM uses {other} compression but `{tool}` is not installed"
                 )));
             }
-            let tmp = std::env::temp_dir().join(format!("dropin-rpmpay-{}", std::process::id()));
+            let tmp = crate::unique_temp_dir("dropin-rpmpay");
             std::fs::write(&tmp, raw)?;
             let out = std::process::Command::new(tool)
                 .args(["-c", tmp.to_str().unwrap()])
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn reads_meta_from_spec_built_rpm() {
-        let dir = std::env::temp_dir().join(format!("dropin-rpm-{}", std::process::id()));
+        let dir = crate::unique_temp_dir("dropin-rpm");
         std::fs::create_dir_all(&dir).unwrap();
         let rpm = build_fixture(&dir);
         let meta = read_meta(&rpm).unwrap();
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn extracts_cpio_payload() {
-        let dir = std::env::temp_dir().join(format!("dropin-rpmx-{}", std::process::id()));
+        let dir = crate::unique_temp_dir("dropin-rpmx");
         std::fs::create_dir_all(&dir).unwrap();
         let rpm = build_fixture(&dir);
         let meta = read_meta(&rpm).unwrap();

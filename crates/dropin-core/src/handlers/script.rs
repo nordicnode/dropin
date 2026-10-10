@@ -987,7 +987,7 @@ mod tests {
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("dropin-audit-{tag}-{}", std::process::id()));
+        let d = crate::unique_temp_dir(&format!("dropin-audit-{tag}"));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

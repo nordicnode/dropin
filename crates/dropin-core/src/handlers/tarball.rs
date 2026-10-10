@@ -342,43 +342,48 @@ struct Sniff {
 fn sniff(_members: &[String], src: &Path, strip: usize) -> Result<Sniff> {
     // To check ELF magic without extracting everything, extract to a scratch
     // dir (cheap relative to the install itself) and inspect.
-    let scratch = std::env::temp_dir().join(format!("dropin-sniff-{}", std::process::id()));
+    // Unique name so parallel installs don't collide.
+    let scratch = crate::unique_temp_dir("dropin-sniff");
     if scratch.exists() {
         std::fs::remove_dir_all(&scratch)?;
     }
-    extract(src, &scratch, strip)?;
+    // Clean up on both success and error.
+    let result = (|| -> Result<Sniff> {
+        extract(src, &scratch, strip)?;
 
-    let mut desktop_files = Vec::new();
-    let mut executables = Vec::new();
-    let mut has_app_asar = false;
-    for entry in walkdir::WalkDir::new(&scratch).into_iter().flatten() {
-        let rel = entry
-            .path()
-            .strip_prefix(&scratch)
-            .unwrap_or(entry.path())
-            .to_string_lossy()
-            .to_string();
-        if rel.ends_with("app.asar") {
-            has_app_asar = true;
+        let mut desktop_files = Vec::new();
+        let mut executables = Vec::new();
+        let mut has_app_asar = false;
+        for entry in walkdir::WalkDir::new(&scratch).into_iter().flatten() {
+            let rel = entry
+                .path()
+                .strip_prefix(&scratch)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .to_string();
+            if rel.ends_with("app.asar") {
+                has_app_asar = true;
+            }
+            if entry
+                .path()
+                .extension()
+                .map(|e| e == "desktop")
+                .unwrap_or(false)
+            {
+                desktop_files.push(rel.clone());
+            }
+            if entry.file_type().is_file() && is_elf_executable(entry.path()) {
+                executables.push(rel);
+            }
         }
-        if entry
-            .path()
-            .extension()
-            .map(|e| e == "desktop")
-            .unwrap_or(false)
-        {
-            desktop_files.push(rel.clone());
-        }
-        if entry.file_type().is_file() && is_elf_executable(entry.path()) {
-            executables.push(rel);
-        }
-    }
+        Ok(Sniff {
+            desktop_files,
+            executables,
+            has_app_asar,
+        })
+    })();
     let _ = std::fs::remove_dir_all(&scratch);
-    Ok(Sniff {
-        desktop_files,
-        executables,
-        has_app_asar,
-    })
+    result
 }
 
 fn is_elf_executable(path: &Path) -> bool {

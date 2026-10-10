@@ -1077,9 +1077,7 @@ pub fn doctor() -> Vec<(String, bool, String)> {
             true,
             format!("managed under {}", dirs.data.display()),
         ),
-        ("tar".into(), have("tar"), "archive handling".into()),
-        ("unzip".into(), have("unzip"), "zip handling".into()),
-        ("ar".into(), have("ar"), ".deb handling".into()),
+        // tar/unzip/ar are no longer needed: pure-Rust archive handling.
         ("flatpak".into(), have("flatpak"), "flatpak handling".into()),
         (
             "sha256sum".into(),

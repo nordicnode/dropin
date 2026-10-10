@@ -267,3 +267,13 @@ pub fn have(cmd: &str) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// A unique temp dir path that won't collide between parallel processes.
+/// Includes PID and nanosecond timestamp.
+pub fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}

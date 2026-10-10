@@ -308,9 +308,8 @@ struct ExtractedMeta {
 /// execution). Only if that fails (e.g. type-1 AppImages) do we fall back to
 /// `<appimage> --appimage-extract`, which executes the AppImage's runtime.
 fn extract_metadata(appimage: &Path) -> Result<ExtractedMeta> {
-    let scratch = std::env::temp_dir().join(format!(
-        "dropin-ai-{}-{}",
-        std::process::id(),
+    let scratch = crate::unique_temp_dir(&format!(
+        "dropin-ai-{}",
         appimage.file_name().unwrap_or_default().to_string_lossy()
     ));
     if scratch.exists() {
