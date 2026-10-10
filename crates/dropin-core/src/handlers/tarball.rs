@@ -339,51 +339,133 @@ struct Sniff {
     has_app_asar: bool,
 }
 
-fn sniff(_members: &[String], src: &Path, strip: usize) -> Result<Sniff> {
-    // To check ELF magic without extracting everything, extract to a scratch
-    // dir (cheap relative to the install itself) and inspect.
-    // Unique name so parallel installs don't collide.
-    let scratch = crate::unique_temp_dir("dropin-sniff");
-    if scratch.exists() {
-        std::fs::remove_dir_all(&scratch)?;
-    }
-    // Clean up on both success and error.
-    let result = (|| -> Result<Sniff> {
-        extract(src, &scratch, strip)?;
+/// Cache of extracted archives: plan() extracts once, install() reuses.
+/// Key: (canonical source path, mtime nanos, file size).
+/// Value: (temp dir, insertion time).
+static EXTRACTION_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(PathBuf, u64, u64), (PathBuf, std::time::Instant)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-        let mut desktop_files = Vec::new();
-        let mut executables = Vec::new();
-        let mut has_app_asar = false;
-        for entry in walkdir::WalkDir::new(&scratch).into_iter().flatten() {
-            let rel = entry
-                .path()
-                .strip_prefix(&scratch)
-                .unwrap_or(entry.path())
-                .to_string_lossy()
-                .to_string();
-            if rel.ends_with("app.asar") {
-                has_app_asar = true;
+/// Max cached extractions; evict oldest beyond this.
+const CACHE_LIMIT: usize = 8;
+/// Evict cache entries older than this.
+const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Insert into the extraction cache, evicting stale/old entries.
+fn cache_insert(id: (PathBuf, u64, u64), dir: PathBuf) {
+    let Ok(mut cache) = EXTRACTION_CACHE.lock() else {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
+    let now = std::time::Instant::now();
+    // Evict expired.
+    cache.retain(|_, (_, t)| now.duration_since(*t) < CACHE_TTL);
+    // Evict oldest if over limit.
+    while cache.len() >= CACHE_LIMIT {
+        if let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, (_, t))| *t)
+            .map(|(k, _)| k.clone())
+        {
+            if let Some((dir, _)) = cache.remove(&oldest) {
+                let _ = std::fs::remove_dir_all(&dir);
             }
-            if entry
-                .path()
-                .extension()
-                .map(|e| e == "desktop")
-                .unwrap_or(false)
-            {
-                desktop_files.push(rel.clone());
-            }
-            if entry.file_type().is_file() && is_elf_executable(entry.path()) {
-                executables.push(rel);
-            }
+        } else {
+            break;
         }
-        Ok(Sniff {
-            desktop_files,
-            executables,
-            has_app_asar,
-        })
-    })();
-    let _ = std::fs::remove_dir_all(&scratch);
-    result
+    }
+    cache.insert(id, (dir, now));
+}
+
+/// Take a cached extraction (removing it from the cache).
+fn cache_take(id: &(PathBuf, u64, u64)) -> Option<PathBuf> {
+    let mut cache = EXTRACTION_CACHE.lock().ok()?;
+    let (dir, _) = cache.remove(id)?;
+    // Clean up expired entries opportunistically.
+    let now = std::time::Instant::now();
+    let stale: Vec<_> = cache
+        .iter()
+        .filter(|(_, (_, t))| now.duration_since(*t) >= CACHE_TTL)
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in stale {
+        if let Some((d, _)) = cache.remove(&k) {
+            let _ = std::fs::remove_dir_all(&d);
+        }
+    }
+    if dir.exists() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// Identify a source file for cache lookup.
+fn source_id(src: &Path) -> Result<(PathBuf, u64, u64)> {
+    let canonical = src
+        .canonicalize()
+        .map_err(|e| Error::Command(format!("Couldn't read the archive file.\n\nDetails: {e}")))?;
+    let meta = std::fs::metadata(&canonical)
+        .map_err(|e| Error::Command(format!("Couldn't read the archive file.\n\nDetails: {e}")))?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    Ok((canonical, mtime, meta.len()))
+}
+
+/// Extract to a temp dir and return its path (caller must clean up on error).
+fn extract_to_temp(src: &Path, strip: usize) -> Result<PathBuf> {
+    let tmp = crate::unique_temp_dir("dropin-extract");
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)?;
+    }
+    extract(src, &tmp, strip)?;
+    Ok(tmp)
+}
+
+/// Inspect an already-extracted directory for app indicators.
+fn sniff_dir(dir: &Path) -> Sniff {
+    let mut desktop_files = Vec::new();
+    let mut executables = Vec::new();
+    let mut has_app_asar = false;
+    for entry in walkdir::WalkDir::new(dir).into_iter().flatten() {
+        let rel = entry
+            .path()
+            .strip_prefix(dir)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .to_string();
+        if rel.ends_with("app.asar") {
+            has_app_asar = true;
+        }
+        if entry
+            .path()
+            .extension()
+            .map(|e| e == "desktop")
+            .unwrap_or(false)
+        {
+            desktop_files.push(rel.clone());
+        }
+        if entry.file_type().is_file() && is_elf_executable(entry.path()) {
+            executables.push(rel);
+        }
+    }
+    Sniff {
+        desktop_files,
+        executables,
+        has_app_asar,
+    }
+}
+
+fn sniff(_members: &[String], src: &Path, strip: usize) -> Result<(Sniff, PathBuf)> {
+    // Extract once to a temp dir, sniff from there.
+    // The caller owns the temp dir: plan() caches it, install() reuses or cleans up.
+    let tmp = extract_to_temp(src, strip)?;
+    let sniff = sniff_dir(&tmp);
+    Ok((sniff, tmp))
 }
 
 fn is_elf_executable(path: &Path) -> bool {
@@ -417,12 +499,19 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
     let d = detect::detect(src)?;
     let members = list_members(src)?;
     let strip = single_top_dir(&members).map(|_| 1).unwrap_or(0);
-    let sniff = sniff(&members, src, strip)?;
+    let (sniff, tmp) = sniff(&members, src, strip)?;
     if !looks_like_app(&sniff) {
+        let _ = std::fs::remove_dir_all(&tmp);
         return Err(Error::Refused(format!(
             "{} looks like data, not an application (no executables or .desktop files found); opening with your archive manager instead",
             src.display()
         )));
+    }
+    // Cache the extraction for install() to reuse (avoids extracting twice).
+    if let Ok(id) = source_id(src) {
+        cache_insert(id, tmp);
+    } else {
+        let _ = std::fs::remove_dir_all(&tmp);
     }
     let slug = slugify(&d.name_hint);
     Ok(InstallPlan {
@@ -445,69 +534,91 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let d = detect::detect(src)?;
     let members = list_members(src)?;
     let strip = single_top_dir(&members).map(|_| 1).unwrap_or(0);
-    let sniff = sniff(&members, src, strip)?;
-    if !looks_like_app(&sniff) {
-        return Err(Error::Refused(format!(
-            "{} looks like data, not an application",
-            src.display()
-        )));
-    }
 
-    let dirs = UserDirs::new();
-    dirs.ensure()?;
-    let slug = slugify(&d.name_hint);
-    let root = dirs.opt.join(&slug);
-    if root.exists() {
-        return Err(Error::Refused(format!(
-            "~/.local/opt/{slug} already exists — remove it first with `dropin remove {slug}`"
-        )));
-    }
-    let _ = opts; // (keep_source is meaningless for archives; the file stays)
+    // Reuse the extraction from plan() if available (avoids extracting twice).
+    // Otherwise extract fresh.
+    let (sniff, tmp): (Sniff, Option<PathBuf>) =
+        match source_id(src).ok().and_then(|id| cache_take(&id)) {
+            Some(cached) => (sniff_dir(&cached), Some(cached)),
+            None => {
+                let (s, t) = sniff(&members, src, strip)?;
+                (s, Some(t))
+            }
+        };
+    // If we extracted fresh here (not from plan's cache), clean up on error.
+    // The success path moves the temp dir to the final location.
+    let tmp_dir = tmp.unwrap(); // sniff always returns a temp dir
+    let result = (|| -> Result<InstallOutcome> {
+        if !looks_like_app(&sniff) {
+            return Err(Error::Refused(format!(
+                "{} looks like data, not an application",
+                src.display()
+            )));
+        }
 
-    extract(src, &root, strip)?;
-    let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(&root)
-        .into_iter()
-        .flatten()
-        .map(|e| e.path().to_path_buf())
-        .collect();
-    // WalkDir yields the root itself first; keep it (removal deletes it whole).
+        let dirs = UserDirs::new();
+        dirs.ensure()?;
+        let slug = slugify(&d.name_hint);
+        let root = dirs.opt.join(&slug);
+        if root.exists() {
+            return Err(Error::Refused(format!(
+                "~/.local/opt/{slug} already exists — remove it first with `dropin remove {slug}`"
+            )));
+        }
+        let _ = opts; // (keep_source is meaningless for archives; the file stays)
 
-    // Choose the main binary: name match first, then shallowest executable.
-    let main_bin = choose_binary(&sniff, &slug, &d.name_hint).map(|rel| root.join(&rel));
+        // Move the extracted temp dir to the final location (fast rename,
+        // no re-extraction).
+        std::fs::rename(&tmp_dir, &root)?;
+        let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(&root)
+            .into_iter()
+            .flatten()
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        // WalkDir yields the root itself first; keep it (removal deletes it whole).
 
-    // Symlink executables into ~/.local/bin (just the main one + any in bin/).
-    let mut linked = 0;
-    if let Some(bin) = &main_bin {
-        link_bin(bin, &dirs, &mut paths)?;
-        linked += 1;
-    }
+        // Choose the main binary: name match first, then shallowest executable.
+        let main_bin = choose_binary(&sniff, &slug, &d.name_hint).map(|rel| root.join(&rel));
 
-    // Menu entry: adopt the best bundled .desktop, else generate one.
-    if let Some(df_rel) = choose_desktop(&sniff, &slug) {
-        let df_path = root.join(&df_rel);
-        if parse_desktop_file(&df_path).is_ok() {
-            let (_, mut extra) = adopt_desktop_file(&df_path, &slug, &d.name_hint, &root)?;
-            paths.append(&mut extra);
+        // Symlink executables into ~/.local/bin (just the main one + any in bin/).
+        let mut linked = 0;
+        if let Some(bin) = &main_bin {
+            link_bin(bin, &dirs, &mut paths)?;
+            linked += 1;
+        }
+
+        // Menu entry: adopt the best bundled .desktop, else generate one.
+        if let Some(df_rel) = choose_desktop(&sniff, &slug) {
+            let df_path = root.join(&df_rel);
+            if parse_desktop_file(&df_path).is_ok() {
+                let (_, mut extra) = adopt_desktop_file(&df_path, &slug, &d.name_hint, &root)?;
+                paths.append(&mut extra);
+            } else if let Some(bin) = &main_bin {
+                let (_, mut extra) = generate_entry(&d.name_hint, &slug, bin)?;
+                paths.append(&mut extra);
+            }
         } else if let Some(bin) = &main_bin {
             let (_, mut extra) = generate_entry(&d.name_hint, &slug, bin)?;
             paths.append(&mut extra);
         }
-    } else if let Some(bin) = &main_bin {
-        let (_, mut extra) = generate_entry(&d.name_hint, &slug, bin)?;
-        paths.append(&mut extra);
-    }
-    let _ = linked;
+        let _ = linked;
 
-    let sha = sha256_of(src).ok();
-    let _ = sha;
-    Ok(InstallOutcome {
-        name: slug,
-        version: None,
-        install_root: Some(root),
-        paths,
-        external: false,
-        update_info: None,
-    })
+        let sha = sha256_of(src).ok();
+        let _ = sha;
+        Ok(InstallOutcome {
+            name: slug,
+            version: None,
+            install_root: Some(root),
+            paths,
+            external: false,
+            update_info: None,
+        })
+    })();
+    // Clean up temp dir if we failed (success moved it via rename).
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+    result
 }
 
 /// Prefer a .desktop whose filename matches the slug, else the shallowest.
