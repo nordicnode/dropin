@@ -382,6 +382,22 @@ pub fn rollback(name: &str) -> Result<String> {
     ))
 }
 
+/// List snapshot files for an app, oldest first. Used by the GUI to decide
+/// whether "Rollback" is available.
+pub fn snapshots(name: &str) -> Vec<std::path::PathBuf> {
+    let dirs = UserDirs::new();
+    let snap_dir = dirs.data.join("snapshots").join(slugify(name));
+    let mut snaps: Vec<_> = std::fs::read_dir(&snap_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("bak"))
+        .collect();
+    snaps.sort();
+    snaps
+}
+
 /// Keep at most `keep` snapshots in `dir`, oldest first.
 fn prune_snapshots(dir: &std::path::Path, keep: usize) {
     let mut snaps: Vec<_> = std::fs::read_dir(dir)

@@ -102,24 +102,24 @@ Then just double-click any installer file.
 
 ## Usage
 
+**The GUI is the whole app.** Open **dropin** from your app menu (or run `dropin-gui`) for the manager: your installed apps with update, rollback, remove, GitHub-release tracking, and doctor — no terminal needed. Double-clicking any installer file opens the install dialog. `dropin integrate` sets up both, plus file-manager entries.
+
+The CLI exists for scripting and does the same things:
+
 ```text
-dropin info <file>        # dry run: exactly what it would do, no changes
-dropin install <file>     # install (shows the plan; scripts need confirmation)
-dropin install --yes <file> --keep-source
-dropin install --system <file.deb>   # real system install via apt/dnf/pacman (polkit)
 dropin list               # everything dropin installed (✓ = checksum-verified)
-dropin remove <name>      # clean removal, reversed from the ledger
-dropin remove --purge <name>  # also trash leftover config/cache/data dirs
 dropin update [name|--all]  # check for updates, on demand only
 dropin rollback <name>    # restore an AppImage to its pre-update snapshot
 dropin track <name> --github owner/repo    # follow a GitHub repo's releases
 dropin untrack <name>     # stop following
-dropin doctor             # verify helper tools (incl. broken menu entries)
-dropin integrate          # double-click + file-manager integration
+dropin remove <name>      # clean removal, reversed from the ledger
+dropin remove --purge <name>  # also trash leftover config/cache/data dirs
+dropin doctor             # health checks (incl. broken menu entries)
+dropin info <file>        # dry run: exactly what it would do, no changes
+dropin install <file>     # install (shows the plan; scripts need confirmation)
+dropin integrate          # double-click + file-manager + menu integration
 dropin unintegrate        # remove all desktop integration
 ```
-
-`dropin-gui <file>` is the graphical dialog — this is also what opens when you double-click a file after `dropin integrate`.
 
 ## Why not…
 

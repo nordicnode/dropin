@@ -1,8 +1,12 @@
-//! dropin-gui: the double-click dialog.
+//! dropin-gui: the graphical interface.
 //!
-//! Registered as the MIME handler for AppImage/.deb/.rpm/.flatpakref/
-//! installer scripts. Shows what installing would do, gets confirmation,
-//! runs the install off the UI thread, reports the result.
+//! With a file argument: the double-click install dialog (registered as the
+//! MIME handler for AppImage/.deb/.rpm/.flatpakref/installer scripts).
+//! Without one: the manager window — installed apps, updates, rollback,
+//! removal, GitHub tracking, and doctor. Everything the CLI does, no
+//! terminal needed.
+
+mod manager;
 
 use dropin_core::detect::{self, Detection};
 use dropin_core::handlers::{InstallOptions, InstallPlan};
@@ -18,12 +22,30 @@ fn main() {
     let auto_install = args.iter().any(|a| a == "--auto-install");
     let file = args
         .iter()
-        .find(|a| *a != "--auto-install")
+        .find(|a| *a != "--auto-install" && *a != "--manager")
         .map(PathBuf::from);
-    let Some(file) = file else {
-        eprintln!("usage: dropin-gui [--auto-install] <file>");
-        std::process::exit(2);
-    };
+
+    // No file: open the manager. `--manager` forces it even with a file arg
+    // present (used by .desktop launchers).
+    let want_manager = file.is_none() || args.iter().any(|a| a == "--manager");
+    if want_manager {
+        let native = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([640.0, 480.0]),
+            ..Default::default()
+        };
+        if let Err(e) = eframe::run_native(
+            "dropin",
+            native,
+            Box::new(|_| Ok(Box::new(manager::ManagerApp::new()))),
+        ) {
+            eprintln!("dropin-gui: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let file = file.unwrap();
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([500.0, 600.0])

@@ -114,6 +114,18 @@ fn mime_registration(dirs: &UserDirs) -> Result<()> {
     );
     write_file(&desktop_path, &desktop)?;
 
+    // Visible launcher for the manager window (the MIME handler above stays
+    // hidden). This is how GUI-only users open dropin.
+    let manager_path = dirs.desktop_entries.join("dropin.desktop");
+    let manager = format!(
+        "[Desktop Entry]\nType=Application\nName=dropin\n\
+         Comment=Install and manage apps\nExec={} --manager\n\
+         Icon=system-software-install\nCategories=System;PackageManager;\n\
+         X-Dropin-Managed=true\n",
+        gui_exe().display(),
+    );
+    write_file(&manager_path, &manager)?;
+
     let mimeapps = config_home().join("mimeapps.list");
     let mut text = std::fs::read_to_string(&mimeapps).unwrap_or_default();
     if !text.contains("[Default Applications]") {
@@ -139,6 +151,7 @@ fn mime_registration(dirs: &UserDirs) -> Result<()> {
 
 fn mime_registration_remove(dirs: &UserDirs) {
     remove_file(&dirs.desktop_entries.join("dropin-gui.desktop"));
+    remove_file(&dirs.desktop_entries.join("dropin.desktop"));
     // Leave mimeapps.list entries: harmless if the .desktop is gone, and
     // editing them out risks mangling user config. The NoDisplay entry
     // disappearing is enough.
