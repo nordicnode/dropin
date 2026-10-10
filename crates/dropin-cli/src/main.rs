@@ -78,6 +78,14 @@ enum Cmd {
     SetupWine,
     /// Set up Proton (GE-Proton via umu-launcher) automatically for games.
     SetupProton,
+    /// Switch a Windows app between Wine and GE-Proton.
+    SetRunner {
+        /// Name of the app.
+        name: String,
+        /// Runner: wine or proton.
+        #[arg(value_parser = ["wine", "proton"])]
+        runner: String,
+    },
     /// Register dropin with the desktop: double-click handling plus
     /// “Install as application” in Dolphin, Nemo, Nautilus, and Thunar.
     Integrate,
@@ -295,6 +303,21 @@ fn run() -> dropin_core::Result<()> {
                 Ok(path) => {
                     println!("\nProton support is ready: {}", path.display());
                     println!("GE-Proton will download automatically on first game launch.");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Cmd::SetRunner { name, runner } => {
+            let slug = dropin_core::slugify(&name);
+            let r = if runner == "proton" {
+                dropin_core::handlers::proton::Runner::Proton
+            } else {
+                dropin_core::handlers::proton::Runner::Wine
+            };
+            match dropin_core::handlers::wine::set_runner(&slug, r) {
+                Ok(msg) => {
+                    println!("{msg}");
                     Ok(())
                 }
                 Err(e) => Err(e),

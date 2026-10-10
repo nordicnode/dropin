@@ -8,9 +8,15 @@
 use crate::style;
 use dropin_core::{health, install, integrate, settings};
 use eframe::egui;
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
+
+thread_local! {
+    /// Apps with available updates, set by the background check.
+    static AVAILABLE_UPDATES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
 
 /// One row in the app list.
 #[derive(Clone)]
@@ -26,6 +32,14 @@ struct AppRow {
     size: Option<String>,
     /// Install date as YYYY-MM-DD, if known.
     installed_on: Option<String>,
+    /// Where the app is installed, if known.
+    install_root: Option<String>,
+    /// Original source file, if known.
+    source_path: Option<String>,
+    /// Env vars as (key, value) pairs.
+    env_vars: Vec<(String, String)>,
+    /// True when an update is available (from background check).
+    has_update: bool,
 }
 
 /// Recursively sum file sizes under a path (cap at 100k entries).
@@ -94,7 +108,7 @@ fn load_apps() -> Vec<AppRow> {
                 None
             };
             rows.push(AppRow {
-                name: inst.name,
+                name: inst.name.clone(),
                 format: inst.format,
                 version: inst.version,
                 verified: inst.verified,
@@ -103,6 +117,19 @@ fn load_apps() -> Vec<AppRow> {
                 has_env,
                 size,
                 installed_on,
+                install_root: inst.install_root,
+                source_path: Some(inst.source_path),
+                env_vars: inst
+                    .env_vars
+                    .as_ref()
+                    .and_then(|j| {
+                        serde_json::from_str::<std::collections::BTreeMap<String, String>>(j).ok()
+                    })
+                    .map(|m| m.into_iter().collect())
+                    .unwrap_or_default(),
+                has_update: AVAILABLE_UPDATES.with(|cell| {
+                    cell.borrow().contains(&inst.name)
+                }),
             });
         }
     }
@@ -150,6 +177,7 @@ pub struct ManagerApp {
     // bulk selection
     selected: std::collections::BTreeSet<String>,
     select_mode: bool,
+    details_name: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -196,6 +224,7 @@ impl ManagerApp {
             sort_by: SortBy::Name,
             format_filter: None,
             select_mode: false,
+            details_name: None,
             selected: std::collections::BTreeSet::new(),
         }
     }
@@ -237,6 +266,11 @@ impl ManagerApp {
             return;
         }
         self.run_op("Checking for updates", || {
+            // Check for available updates first (for badges).
+            let available = install::check_for_updates().unwrap_or_default();
+            AVAILABLE_UPDATES.with(|cell| {
+                *cell.borrow_mut() = available;
+            });
             let (message, updates) = match install::update(None, true) {
                 Ok(reports) => {
                     let n = reports
@@ -695,6 +729,8 @@ impl ManagerApp {
             Untrack,
             Launch,
             EnvVars,
+            Details,
+            SwitchRunner(bool),
         }
         let mut act = Act::None;
 
@@ -717,6 +753,9 @@ impl ManagerApp {
                         }
                         if app.has_env {
                             style::badge(ui, "env", style::color::INFO);
+                        }
+                        if app.has_update {
+                            style::badge(ui, "update", style::color::WARN);
                         }
                     });
                     if let Some(repo) = &app.github_repo {
@@ -752,6 +791,27 @@ impl ManagerApp {
                         if ui.button("Environment…").clicked() && !busy {
                             act = Act::EnvVars;
                             ui.close();
+                        }
+                        if ui.button("Details…").clicked() {
+                            act = Act::Details;
+                            ui.close();
+                        }
+                        // Runner switch for Windows apps.
+                        if app.format.contains("Windows") {
+                            let current = dropin_core::handlers::wine::current_runner(
+                                &dropin_core::slugify(&app.name),
+                            );
+                            let is_proton =
+                                current == Some(dropin_core::handlers::proton::Runner::Proton);
+                            let label = if is_proton {
+                                "Switch to Wine…"
+                            } else {
+                                "Switch to GE-Proton…"
+                            };
+                            if ui.button(label).clicked() && !busy {
+                                act = Act::SwitchRunner(!is_proton);
+                                ui.close();
+                            }
                         }
                         if !is_script {
                             if app.github_repo.is_some() {
@@ -825,6 +885,25 @@ impl ManagerApp {
                 self.env_vars = self.load_env_vars();
                 self.env_new_key.clear();
                 self.env_new_value.clear();
+            }
+            Act::Details => {
+                self.details_name = Some(name);
+            }
+            Act::SwitchRunner(to_proton) => {
+                let runner = if to_proton {
+                    dropin_core::handlers::proton::Runner::Proton
+                } else {
+                    dropin_core::handlers::proton::Runner::Wine
+                };
+                let slug = dropin_core::slugify(&name);
+                self.run_op(&format!("Switching {name}"), move || {
+                    let message = dropin_core::handlers::wine::set_runner(&slug, runner)
+                        .unwrap_or_else(|e| format!("Couldn't switch runner: {e}"));
+                    OpDone {
+                        message,
+                        refresh_apps: true,
+                    }
+                });
             }
         }
     }
@@ -1208,6 +1287,110 @@ impl ManagerApp {
                 });
             if !open || close {
                 self.env_name = None;
+            }
+        }
+
+        // ---- details view ----
+        if let Some(name) = self.details_name.clone() {
+            let app = self.apps.iter().find(|a| a.name == name).cloned();
+            let mut open = true;
+            let mut close = false;
+            if let Some(app) = app {
+                egui::Window::new(format!("{} — details", app.name))
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            style::app_badge(ui, &app.name, 56.0);
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(&app.name).size(20.0).strong());
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    style::badge(ui, &app.format, style::format_color(&app.format));
+                                    if let Some(v) = &app.version {
+                                        style::badge(ui, &format!("v{v}"), style::color::BORDER);
+                                    }
+                                    if app.verified {
+                                        style::badge(ui, "✓ verified", style::color::GOOD);
+                                    }
+                                    if app.has_update {
+                                        style::badge(ui, "update available", style::color::WARN);
+                                    }
+                                });
+                            });
+                        });
+                        ui.add_space(12.0);
+                        egui::Grid::new("details_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                if let Some(s) = &app.size {
+                                    ui.label(
+                                        egui::RichText::new("Size").color(style::color::TEXT_DIM),
+                                    );
+                                    ui.label(s);
+                                    ui.end_row();
+                                }
+                                if let Some(d) = &app.installed_on {
+                                    ui.label(
+                                        egui::RichText::new("Installed")
+                                            .color(style::color::TEXT_DIM),
+                                    );
+                                    ui.label(d);
+                                    ui.end_row();
+                                }
+                                if let Some(p) = &app.install_root {
+                                    ui.label(
+                                        egui::RichText::new("Location")
+                                            .color(style::color::TEXT_DIM),
+                                    );
+                                    ui.label(egui::RichText::new(p).small().monospace());
+                                    ui.end_row();
+                                }
+                                if let Some(s) = &app.source_path {
+                                    ui.label(
+                                        egui::RichText::new("Source").color(style::color::TEXT_DIM),
+                                    );
+                                    ui.label(egui::RichText::new(s).small().monospace());
+                                    ui.end_row();
+                                }
+                                if let Some(r) = &app.github_repo {
+                                    ui.label(
+                                        egui::RichText::new("Tracking")
+                                            .color(style::color::TEXT_DIM),
+                                    );
+                                    ui.label(r);
+                                    ui.end_row();
+                                }
+                            });
+                        if !app.env_vars.is_empty() {
+                            ui.add_space(8.0);
+                            style::section_title(ui, "Environment");
+                            for (k, v) in &app.env_vars {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(k).strong().monospace());
+                                    ui.label("=");
+                                    ui.label(egui::RichText::new(v).monospace());
+                                });
+                            }
+                        }
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if style::primary_button(ui, "Close").clicked() {
+                                        close = true;
+                                    }
+                                },
+                            );
+                        });
+                    });
+            }
+            if !open || close {
+                self.details_name = None;
             }
         }
     }

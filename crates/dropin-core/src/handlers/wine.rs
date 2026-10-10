@@ -276,3 +276,82 @@ pub fn remove(slug: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Change the runner for an installed Windows app (Wine <-> GE-Proton).
+/// Rebuilds the desktop entry. The prefix is reused.
+pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
+    let ledger = crate::ledger::Ledger::open()?;
+    let inst = ledger.get(slug)?;
+    let prefix = prefix_for(slug);
+    if !prefix.exists() {
+        return Err(Error::NotInstalled(slug.into()));
+    }
+
+    let exe = find_installed_exe(&prefix)
+        .ok_or_else(|| Error::Command("couldn't find the app's executable".into()))?;
+
+    let dirs = UserDirs::new();
+    let desktop_path = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
+    let desktop_text = match runner {
+        super::proton::Runner::Wine => {
+            let wine = super::wine_setup::wine_binary()
+                .unwrap_or_else(|| PathBuf::from("wine"));
+            format!(
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
+                inst.name,
+                prefix.display(),
+                wine.display(),
+                exe.display()
+            )
+        }
+        super::proton::Runner::Proton => {
+            let (env, argv) = super::proton::proton_launch_cmd(&prefix, &exe, &inst.name);
+            let env_str = env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let argv_str = argv
+                .iter()
+                .map(|a| format!("\"{a}\""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\nCategories=Game;\nTerminal=false\n",
+                inst.name,
+            )
+        }
+    };
+    std::fs::write(&desktop_path, desktop_text)?;
+
+    // Record the runner choice so it survives.
+    let mut env_map = ledger
+        .env_vars(slug)
+        .unwrap_or_default();
+    env_map.insert(
+        "__dropin_runner".into(),
+        match runner {
+            super::proton::Runner::Wine => "wine".into(),
+            super::proton::Runner::Proton => "proton".into(),
+        },
+    );
+    let json = serde_json::to_string(&env_map).unwrap_or_default();
+    ledger.set_env_vars(slug, &json)?;
+
+    Ok(format!(
+        "Switched '{}' to {}.",
+        inst.name,
+        runner.label()
+    ))
+}
+
+/// Get the current runner for an app, if it's a Windows app.
+pub fn current_runner(slug: &str) -> Option<super::proton::Runner> {
+    let ledger = crate::ledger::Ledger::open().ok()?;
+    let env_map = ledger.env_vars(slug).ok()?;
+    match env_map.get("__dropin_runner").map(|s| s.as_str()) {
+        Some("proton") => Some(super::proton::Runner::Proton),
+        Some("wine") => Some(super::proton::Runner::Wine),
+        _ => None,
+    }
+}

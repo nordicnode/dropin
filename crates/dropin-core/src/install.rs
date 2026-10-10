@@ -290,6 +290,24 @@ pub fn update(name: Option<&str>, all: bool) -> Result<Vec<UpdateReport>> {
     Ok(targets.iter().map(update_one).collect())
 }
 
+/// Check for available updates without applying them.
+/// Returns the names of apps that have updates available.
+pub fn check_for_updates() -> Result<Vec<String>> {
+    let ledger = Ledger::open()?;
+    let mut available = Vec::new();
+    for inst in ledger.list()? {
+        if let Some(repo) = &inst.github_repo {
+            let dirs = UserDirs::new();
+            if let Ok((release, _)) = crate::github::latest_release(repo, &dirs.data) {
+                if crate::github::is_newer(inst.version.as_deref(), &release.tag) {
+                    available.push(inst.name.clone());
+                }
+            }
+        }
+    }
+    Ok(available)
+}
+
 fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
     let name = inst.name.clone();
     // Flatpak owns its updates entirely.
