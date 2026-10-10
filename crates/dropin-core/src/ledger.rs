@@ -22,6 +22,8 @@ pub struct Install {
     pub update_info: Option<String>,
     /// True when a companion checksum verified at install time.
     pub verified: bool,
+    /// GitHub repo ("owner/repo") tracked for release updates.
+    pub github_repo: Option<String>,
     pub created_at: String,
     pub files: Vec<String>,
 }
@@ -89,6 +91,12 @@ impl Ledger {
                 [],
             )?;
         }
+        // Migration (Phase 4): GitHub repo tracked for release updates,
+        // e.g. "owner/repo".
+        if !cols.iter().any(|c| c == "github_repo") {
+            self.conn
+                .execute("ALTER TABLE installs ADD COLUMN github_repo TEXT", [])?;
+        }
         Ok(())
     }
 }
@@ -104,6 +112,7 @@ pub struct NewInstall {
     pub external: bool,
     pub update_info: Option<String>,
     pub verified: bool,
+    pub github_repo: Option<String>,
     pub files: Vec<PathBuf>,
 }
 
@@ -114,8 +123,8 @@ impl Ledger {
         self.conn
             .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
-            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 inst.name,
                 inst.format,
@@ -126,6 +135,7 @@ impl Ledger {
                 inst.external as i32,
                 inst.update_info,
                 inst.verified as i32,
+                inst.github_repo,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -140,7 +150,7 @@ impl Ledger {
 
     pub fn get(&self, name: &str) -> Result<Install> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
@@ -158,7 +168,8 @@ impl Ledger {
             external: row.get::<_, i32>(7)? != 0,
             update_info: row.get(8)?,
             verified: row.get::<_, i32>(9)? != 0,
-            created_at: row.get(10)?,
+            github_repo: row.get(10)?,
+            created_at: row.get(11)?,
             files,
         })
     }
@@ -175,7 +186,7 @@ impl Ledger {
 
     pub fn list(&self) -> Result<Vec<Install>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at
              FROM installs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -190,12 +201,13 @@ impl Ledger {
                 row.get::<_, i32>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, i32>(9)?,
-                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, String>(11)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, created_at) =
+            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at) =
                 r?;
             out.push(Install {
                 id,
@@ -208,11 +220,36 @@ impl Ledger {
                 external: external != 0,
                 update_info,
                 verified: verified != 0,
+                github_repo,
                 created_at,
                 files: self.files_for(id)?,
             });
         }
         Ok(out)
+    }
+
+    /// Set (or clear) the GitHub repo tracked for release updates.
+    pub fn set_github_repo(&self, name: &str, repo: Option<&str>) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE installs SET github_repo = ?1 WHERE name = ?2",
+            params![repo, name],
+        )?;
+        if n == 0 {
+            return Err(Error::NotInstalled(name.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Record the installed version (e.g. the GitHub tag just installed).
+    pub fn set_version(&self, name: &str, version: &str) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE installs SET version = ?1 WHERE name = ?2",
+            params![version, name],
+        )?;
+        if n == 0 {
+            return Err(Error::NotInstalled(name.to_string()));
+        }
+        Ok(())
     }
 
     /// Remove the ledger rows for an install (call *after* deleting the files).

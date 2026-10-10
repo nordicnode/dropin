@@ -245,6 +245,7 @@ mod tests {
             external: false,
             update_info: None,
             verified: false,
+            github_repo: None,
             created_at: created_at.into(),
             files: vec![],
         }

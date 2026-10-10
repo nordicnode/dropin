@@ -5,6 +5,7 @@
 //! buffered blindly.
 
 use std::io::Read;
+use std::path::Path;
 
 /// Result of a ranged GET: what the server actually sent.
 pub enum RangeBody {
@@ -45,6 +46,39 @@ pub fn get_range(url: &str, start: u64, len: u64) -> Result<RangeBody, String> {
         200 => Ok(RangeBody::Full(body)),
         s => Err(format!("unexpected status {s} for range request")),
     }
+}
+
+/// Stream a URL directly to `path`, refusing anything over `max_bytes`.
+/// The destination is created fresh; a failed download leaves no partial file.
+pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), String> {
+    let tmp = path.with_extension("dropin-part");
+    let mut res = ureq::get(url)
+        .header("User-Agent", super::USER_AGENT)
+        .call()
+        .map_err(|e| format!("request failed: {e}"))?;
+    if res.status().as_u16() != 200 {
+        return Err(format!("unexpected status {}", res.status().as_u16()));
+    }
+    let mut out = std::fs::File::create(&tmp).map_err(|e| format!("creating file: {e}"))?;
+    let mut reader = res.body_mut().as_reader();
+    let mut buf = [0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| format!("reading body: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > max_bytes {
+            drop(out);
+            std::fs::remove_file(&tmp).ok();
+            return Err(format!("download exceeded {max_bytes} bytes"));
+        }
+        use std::io::Write;
+        out.write_all(&buf[..n]).map_err(|e| format!("writing file: {e}"))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| format!("finishing download: {e}"))?;
+    Ok(())
 }
 
 /// GET the whole file, refusing anything over `max_bytes`.

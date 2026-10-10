@@ -12,6 +12,7 @@ pub mod install;
 pub mod ledger;
 pub mod verify;
 pub mod zsync;
+pub mod github;
 
 /// Test-only helpers for tests that redirect HOME/DROPIN_HOME.
 ///

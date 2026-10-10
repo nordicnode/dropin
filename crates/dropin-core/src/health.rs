@@ -18,6 +18,8 @@ pub enum HealthKind {
     Shadowed,
     /// The same app is also installed via a system package manager.
     CrossSource,
+    /// A menu entry's Exec points at something that doesn't exist.
+    BrokenExec,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +50,53 @@ fn check_with(dirs: &UserDirs, sys_desktop_dirs: &[PathBuf], installs: &[Install
     issues.extend(check_duplicates(dirs, installs));
     issues.extend(check_shadowed(dirs, sys_desktop_dirs, installs));
     issues.extend(check_cross_source(dirs, installs));
+    issues.extend(check_broken_exec(dirs, installs));
+    issues
+}
+
+/// Menu entries whose Exec binary doesn't exist. Catches the old dropin bug
+/// that wrote `<AppImage>/AppRun` (joining AppRun onto the image file path
+/// instead of using the image itself): the fix is to point Exec at the
+/// AppImage, which reinstalling now does correctly.
+fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> {
+    let mut issues = Vec::new();
+    for inst in installs {
+        if inst.format != "AppImage" {
+            continue;
+        }
+        let desktop = dirs.desktop_entries.join(format!("{}.desktop", inst.name));
+        let text = match std::fs::read_to_string(&desktop) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let exec = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Exec="))
+            .map(str::trim)
+            .unwrap_or("");
+        let bin = exec.split_whitespace().next().unwrap_or("");
+        if bin.is_empty() || Path::new(bin).exists() {
+            continue;
+        }
+        // The known-bad pattern: <image>/AppRun where <image> is a file.
+        let hint = if let Some(img) = bin.strip_suffix("/AppRun") {
+            if Path::new(img).is_file() {
+                format!(
+                    "this is the old `<AppImage>/AppRun` bug — edit {} and change Exec to: Exec={img}",
+                    desktop.display()
+                )
+            } else {
+                format!("Exec points to {bin}, which doesn't exist — reinstall the app")
+            }
+        } else {
+            format!("Exec points to {bin}, which doesn't exist — reinstall the app")
+        };
+        issues.push(HealthIssue {
+            kind: HealthKind::BrokenExec,
+            message: format!("'{}' menu entry points at a missing program: {bin}", inst.name),
+            hint,
+        });
+    }
     issues
 }
 
@@ -337,6 +386,7 @@ mod tests {
             external: false,
             update_info: None,
             verified: false,
+            github_repo: None,
             created_at: String::new(),
             files,
         }
@@ -423,6 +473,46 @@ mod tests {
             vec![dirs.desktop_entries.join("mine.desktop").display().to_string()],
         );
         assert!(check_shadowed(&dirs, &[sys], &[inst]).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn detects_apprun_exec_bug() {
+        let d = tmpdir("brokenexec");
+        let dirs = test_dirs(&d);
+        std::fs::create_dir_all(&dirs.desktop_entries).unwrap();
+        std::fs::create_dir_all(&dirs.applications).unwrap();
+        // The AppImage itself exists; the old bug wrote Exec=<image>/AppRun.
+        let img = dirs.applications.join("app.AppImage");
+        std::fs::write(&img, b"fake").unwrap();
+        std::fs::write(
+            dirs.desktop_entries.join("myapp.desktop"),
+            format!("[Desktop Entry]\nName=MyApp\nExec={}/AppRun\n", img.display()),
+        )
+        .unwrap();
+        let inst = install("myapp", vec![img.display().to_string()]);
+        let issues = check_broken_exec(&dirs, &[inst]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, HealthKind::BrokenExec);
+        assert!(issues[0].hint.contains(&img.display().to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn healthy_exec_is_quiet() {
+        let d = tmpdir("healthyexec");
+        let dirs = test_dirs(&d);
+        std::fs::create_dir_all(&dirs.desktop_entries).unwrap();
+        std::fs::create_dir_all(&dirs.applications).unwrap();
+        let img = dirs.applications.join("app.AppImage");
+        std::fs::write(&img, b"fake").unwrap();
+        std::fs::write(
+            dirs.desktop_entries.join("myapp.desktop"),
+            format!("[Desktop Entry]\nName=MyApp\nExec={}\n", img.display()),
+        )
+        .unwrap();
+        let inst = install("myapp", vec![img.display().to_string()]);
+        assert!(check_broken_exec(&dirs, &[inst]).is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

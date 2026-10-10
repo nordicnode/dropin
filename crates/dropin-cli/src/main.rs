@@ -51,6 +51,19 @@ enum Cmd {
         /// Name of the app to roll back.
         name: String,
     },
+    /// Track a GitHub repo's releases for an installed AppImage.
+    Track {
+        /// Name of the installed app.
+        name: String,
+        /// GitHub repo as owner/repo.
+        #[arg(long)]
+        github: String,
+    },
+    /// Stop tracking a GitHub repo for an app.
+    Untrack {
+        /// Name of the installed app.
+        name: String,
+    },
     /// List apps installed by dropin.
     List,
     /// Check helper tools and environment.
@@ -166,6 +179,16 @@ fn run() -> dropin_core::Result<()> {
             println!("{msg}.");
             Ok(())
         }
+        Cmd::Track { name, github } => {
+            let msg = install::track(&name, &github)?;
+            println!("{msg}.");
+            Ok(())
+        }
+        Cmd::Untrack { name } => {
+            let msg = install::untrack(&name)?;
+            println!("{msg}.");
+            Ok(())
+        }
         Cmd::List => {
             let items = install::list()?;
             if items.is_empty() {
@@ -195,6 +218,7 @@ fn run() -> dropin_core::Result<()> {
                         dropin_core::health::HealthKind::Duplicate => "duplicate",
                         dropin_core::health::HealthKind::Shadowed => "shadowed",
                         dropin_core::health::HealthKind::CrossSource => "also-installed",
+                        dropin_core::health::HealthKind::BrokenExec => "broken-menu",
                     };
                     println!("\n[{tag}] {}", i.message);
                     println!("        hint: {}", i.hint);

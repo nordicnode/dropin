@@ -1,7 +1,7 @@
 //! AppImage handler: move to ~/Applications, integrate into the menu.
 
 use super::{InstallOptions, InstallOutcome, InstallPlan};
-use crate::desktop::{adopt_desktop_file, generate_entry, parse_desktop_file};
+use crate::desktop::{adopt_desktop_file_appimage, generate_entry, parse_desktop_file};
 use crate::{detect, slugify, Error, Result, UserDirs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -68,7 +68,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
                     .and_then(|m| m.get("X-AppImage-UpdateInformation").cloned());
             }
             let (entry_path, mut extra) = match meta.desktop_file {
-                Some(df) => adopt_desktop_file(&df, &slug, &d.name_hint, &dest)?,
+                Some(df) => adopt_desktop_file_appimage(&df, &slug, &d.name_hint, &dest)?,
                 None => generate_entry(&d.name_hint, &slug, &dest)?,
             };
             let _ = entry_path;
@@ -221,11 +221,12 @@ fn find_squashfs_offset(appimage: &Path) -> Result<Option<u64>> {
 
     const MAGIC: &[u8] = b"hsqs"; // squashfs superblock magic, little-endian
     const WINDOW: u64 = 1 << 20; // 1 MiB scan windows
+    const SUPERBLOCK_LEN: usize = 96;
 
     let mut f = std::fs::File::open(appimage)?;
     let len = f.metadata()?.len();
-    // Overlap windows by the magic length so it can't straddle a boundary.
-    let mut buf = vec![0u8; WINDOW as usize + MAGIC.len()];
+    // Overlap windows so the magic (or the superblock) can't straddle one.
+    let mut buf = vec![0u8; WINDOW as usize + SUPERBLOCK_LEN];
     let mut pos = 0u64;
     while pos < len {
         f.seek(SeekFrom::Start(pos))?;
@@ -233,8 +234,15 @@ fn find_squashfs_offset(appimage: &Path) -> Result<Option<u64>> {
         if n < MAGIC.len() {
             break;
         }
-        if let Some(i) = buf[..n].windows(MAGIC.len()).position(|w| w == MAGIC) {
-            return Ok(Some(pos + i as u64));
+        let mut start = 0;
+        while let Some(i) = buf[start..n].windows(MAGIC.len()).position(|w| w == MAGIC) {
+            let at = pos + (start + i) as u64;
+            // The magic alone is not enough: it can appear spuriously in the
+            // ELF runtime. Validate the superblock before trusting it.
+            if superblock_valid(&buf[start + i..]) {
+                return Ok(Some(at));
+            }
+            start += i + 1;
         }
         if n < buf.len() {
             break; // EOF
@@ -244,10 +252,34 @@ fn find_squashfs_offset(appimage: &Path) -> Result<Option<u64>> {
     Ok(None)
 }
 
+/// Sanity-check the 96-byte squashfs superblock at the start of `bytes`
+/// (which must begin with the magic). Rejects false-positive magic hits in
+/// the AppImage runtime.
+fn superblock_valid(bytes: &[u8]) -> bool {
+    if bytes.len() < 96 || &bytes[0..4] != b"hsqs" {
+        return false;
+    }
+    let u16le = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+    let u32le = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+
+    let inodes = u32le(4);
+    let block_size = u32le(12);
+    let compression = u16le(20);
+    let block_log = u16le(22);
+    let s_major = u16le(28);
+
+    s_major == 4
+        && (1..=6).contains(&compression) // gzip, lzma, lzo, xz, lz4, zstd
+        && (12..=20).contains(&block_log)
+        && block_size == (1u32 << block_log)
+        && inodes > 0
+        && inodes < 50_000_000
+}
+
 #[cfg(test)]
 mod safe_extract_tests {
     use super::*;
-    use std::io::{Cursor, Write};
+    use std::io::{Cursor, Seek, Write};
 
     fn tmpdir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("dropin-sqfs-{tag}-{}", std::process::id()));
@@ -299,6 +331,36 @@ mod safe_extract_tests {
         let plain = d.join("plain.bin");
         std::fs::write(&plain, b"just some bytes, no squashfs here").unwrap();
         assert_eq!(find_squashfs_offset(&plain).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn spurious_magic_in_prefix_is_skipped() {
+        // Regression test: real AppImages (e.g. OpenChamber) can contain the
+        // squashfs magic as a false positive inside the ELF runtime. The
+        // finder must validate the superblock and keep looking.
+        let d = tmpdir("spurious");
+        let mut writer = backhand::FilesystemWriter::default();
+        let header = backhand::NodeHeader::new(0o644, 0, 0, 0);
+        writer
+            .push_file(Cursor::new(b"x"), "/f", header)
+            .unwrap();
+        let mut sq = Cursor::new(Vec::new());
+        writer.write(&mut sq).unwrap();
+        let sq_bytes = sq.into_inner();
+
+        let appimage = d.join("fake.AppImage");
+        let mut f = std::fs::File::create(&appimage).unwrap();
+        f.write_all(&[0x7f, b'E', b'L', b'F']).unwrap();
+        // Spurious magic + 92 bytes of garbage (not a valid superblock).
+        f.write_all(b"hsqs").unwrap();
+        f.write_all(&[0xAAu8; 92]).unwrap();
+        f.write_all(&[0u8; 1000]).unwrap();
+        let real_at = f.stream_position().unwrap();
+        f.write_all(&sq_bytes).unwrap();
+
+        let off = find_squashfs_offset(&appimage).unwrap().expect("offset found");
+        assert_eq!(off, real_at, "skipped the spurious magic");
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -71,6 +71,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         external: outcome.external,
         update_info: outcome.update_info.clone(),
         verified,
+        github_repo: None,
         files: outcome.paths.clone(),
     })?;
     Ok(outcome)
@@ -201,8 +202,12 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
             Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("flatpak update failed: {e}")) },
         };
     }
-    // AppImage: native zsync first, appimageupdatetool as fallback.
+    // AppImage: an explicitly tracked GitHub repo wins; otherwise native
+    // zsync first, appimageupdatetool as fallback.
     if inst.format == "AppImage" {
+        if let Some(repo) = inst.github_repo.clone() {
+            return update_github(inst, &repo);
+        }
         let channel = inst.update_info.clone().unwrap_or_default();
         if channel.is_empty() {
             return UpdateReport {
@@ -390,6 +395,175 @@ fn prune_snapshots(dir: &std::path::Path, keep: usize) {
     while snaps.len() > keep {
         let old = snaps.remove(0);
         std::fs::remove_file(old).ok();
+    }
+}
+
+/// Associate a GitHub repo with an installed AppImage for release tracking.
+pub fn track(name: &str, github_repo: &str) -> Result<String> {
+    let repo = github_repo.trim().trim_end_matches('/');
+    if repo.split('/').count() != 2 || repo.split('/').any(|p| p.is_empty()) {
+        return Err(Error::Refused(format!(
+            "{github_repo:?} is not an owner/repo"
+        )));
+    }
+    let ledger = Ledger::open()?;
+    let inst = ledger.get(&slugify(name))?;
+    if inst.format != "AppImage" {
+        return Err(Error::Refused(format!(
+            "GitHub release tracking is for AppImages ({} is {})",
+            inst.name, inst.format
+        )));
+    }
+    ledger.set_github_repo(&inst.name, Some(repo))?;
+    Ok(format!("tracking {} for {}", inst.name, repo))
+}
+
+/// Stop tracking a GitHub repo for an app.
+pub fn untrack(name: &str) -> Result<String> {
+    let ledger = Ledger::open()?;
+    let inst = ledger.get(&slugify(name))?;
+    match &inst.github_repo {
+        Some(repo) => {
+            ledger.set_github_repo(&inst.name, None)?;
+            Ok(format!("no longer tracking {} ({})", inst.name, repo))
+        }
+        None => Ok(format!("{} was not tracking a GitHub repo", inst.name)),
+    }
+}
+
+/// Update an AppImage from its tracked GitHub repo: compare the latest
+/// release tag against the installed version, download the new AppImage
+/// asset, snapshot the old file, and install the new one.
+fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
+    let name = inst.name.clone();
+    let dirs = UserDirs::new();
+
+    let (release, _cached) = match crate::github::latest_release(repo, &dirs.data) {
+            Ok(r) => r,
+            Err(e) => {
+                return UpdateReport {
+                    name,
+                    status: UpdateStatus::Failed(format!("GitHub release check failed: {e}")),
+                }
+            }
+        };
+
+    if !crate::github::is_newer(inst.version.as_deref(), &release.tag) {
+        return UpdateReport {
+            name,
+            status: UpdateStatus::UpToDate(format!(
+                "{} already current",
+                inst.version.as_deref().unwrap_or(&release.tag)
+            )),
+        };
+    }
+
+    let asset = match crate::github::pick_appimage_asset(&release) {
+        Some(a) => a.clone(),
+        None => {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Failed(format!(
+                    "release {} has no AppImage asset for this machine",
+                    release.tag
+                )),
+            }
+        }
+    };
+
+    // Download the new AppImage.
+    let tmpdir = std::env::temp_dir().join(format!("dropin-gh-{}", std::process::id()));
+    if std::fs::create_dir_all(&tmpdir).is_err() {
+        return UpdateReport {
+            name,
+            status: UpdateStatus::Failed("could not create download directory".into()),
+        };
+    }
+    let downloaded = tmpdir.join(&asset.name);
+    if let Err(e) = crate::zsync::fetch::download_to_file(
+        &asset.download_url,
+        &downloaded,
+        2 * 1024 * 1024 * 1024,
+    ) {
+        return UpdateReport {
+            name,
+            status: UpdateStatus::Failed(format!("download failed: {e}")),
+        };
+    }
+
+    // Snapshot the current AppImage, then get it out of the way so the
+    // normal install flow can place the new one.
+    let current = inst
+        .files
+        .iter()
+        .find(|p| p.to_lowercase().ends_with(".appimage"))
+        .cloned();
+    if let Some(cur) = &current {
+        let snap_dir = dirs.data.join("snapshots").join(slugify(&inst.name));
+        if std::fs::create_dir_all(&snap_dir).is_ok() {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let bak = snap_dir.join(format!(
+                "{}-{secs}.bak",
+                std::path::Path::new(cur)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("appimage")
+            ));
+            std::fs::rename(cur, &bak).ok();
+        }
+    }
+
+    // Install the new AppImage through the normal flow (menu integration
+    // and all), then restore tracking state.
+    let opts = InstallOptions { keep_source: true, ..Default::default() };
+    match install(&downloaded, &opts) {
+        Ok(_) => {
+            let ledger = match Ledger::open() {
+                Ok(l) => l,
+                Err(e) => {
+                    return UpdateReport {
+                        name,
+                        status: UpdateStatus::Failed(format!("installed but ledger update failed: {e}")),
+                    }
+                }
+            };
+            ledger.set_github_repo(&slugify(&name), Some(repo)).ok();
+            ledger.set_version(&slugify(&name), &release.tag).ok();
+            std::fs::remove_dir_all(&tmpdir).ok();
+            UpdateReport {
+                name,
+                status: UpdateStatus::Updated(format!(
+                    "GitHub: {} -> {} ({})",
+                    inst.version.as_deref().unwrap_or("unknown"),
+                    release.tag,
+                    asset.name
+                )),
+            }
+        }
+        Err(e) => {
+            // Try to restore the snapshotted file.
+            if let Some(cur) = current {
+                let snap_dir = dirs.data.join("snapshots").join(slugify(&inst.name));
+                if let Ok(mut snaps) = std::fs::read_dir(&snap_dir).map(|r| {
+                    r.filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("bak"))
+                        .collect::<Vec<_>>()
+                }) {
+                    snaps.sort();
+                    if let Some(latest) = snaps.pop() {
+                        std::fs::rename(&latest, &cur).ok();
+                    }
+                }
+            }
+            UpdateReport {
+                name,
+                status: UpdateStatus::Failed(format!("installing new AppImage failed: {e}")),
+            }
+        }
     }
 }
 

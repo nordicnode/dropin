@@ -94,12 +94,35 @@ pub fn adopt_desktop_file(
     app_name: &str,
     install_root: &Path,
 ) -> Result<(PathBuf, Vec<PathBuf>)> {
+    adopt_desktop_file_inner(src, slug, app_name, install_root, false)
+}
+
+/// Adopt a .desktop file from inside an AppImage. `appimage` is the installed
+/// AppImage file itself: the embedded `Exec=AppRun` (the AppImage convention
+/// for "run me") is rewritten to it, instead of being joined onto it as if
+/// it were a directory.
+pub fn adopt_desktop_file_appimage(
+    src: &Path,
+    slug: &str,
+    app_name: &str,
+    appimage: &Path,
+) -> Result<(PathBuf, Vec<PathBuf>)> {
+    adopt_desktop_file_inner(src, slug, app_name, appimage, true)
+}
+
+fn adopt_desktop_file_inner(
+    src: &Path,
+    slug: &str,
+    app_name: &str,
+    install_root: &Path,
+    is_appimage: bool,
+) -> Result<(PathBuf, Vec<PathBuf>)> {
     let map = parse_desktop_file(src)?;
     let mut recorded = Vec::new();
 
     let exec = map
         .get("Exec")
-        .map(|e| rewrite_exec(e, install_root))
+        .map(|e| rewrite_exec(e, install_root, is_appimage))
         .unwrap_or_else(|| install_root.display().to_string());
     let icon = map
         .get("Icon")
@@ -123,13 +146,24 @@ pub fn adopt_desktop_file(
 }
 
 /// Rewrite an Exec line whose binary lived under /usr (or relative) to the
-/// new root. Keeps any arguments after the binary.
-fn rewrite_exec(exec: &str, install_root: &Path) -> String {
+/// new root. Keeps any arguments after the binary. Field codes
+/// (%f %F %u %U %i %c %k) pass through untouched.
+///
+/// For AppImages (`is_appimage`), the embedded Exec is `AppRun` by
+/// convention — it means "run the image itself", so it becomes the AppImage
+/// path. (Joining it onto the path would produce `<image>/AppRun`, which
+/// does not exist.)
+fn rewrite_exec(exec: &str, install_root: &Path, is_appimage: bool) -> String {
     let mut parts = exec.split_whitespace();
     let bin = parts.next().unwrap_or("");
     let rest: Vec<&str> = parts.collect();
-    // Field codes (%f %F %u %U %i %c %k) pass through untouched.
-    let new_bin = if bin.starts_with("/usr/") {
+    let new_bin = if is_appimage {
+        if bin.starts_with('/') {
+            bin.to_string() // absolute inside an AppImage: leave it
+        } else {
+            install_root.display().to_string()
+        }
+    } else if bin.starts_with("/usr/") {
         install_root
             .join(bin.trim_start_matches('/'))
             .display()
@@ -203,13 +237,26 @@ mod tests {
     fn rewrite_exec_usr_paths() {
         let root = Path::new("/home/u/.local/opt/foo");
         assert_eq!(
-            rewrite_exec("/usr/bin/foo --flag %F", root),
+            rewrite_exec("/usr/bin/foo --flag %F", root, false),
             "/home/u/.local/opt/foo/usr/bin/foo --flag %F"
         );
         assert_eq!(
-            rewrite_exec("bin/foo", root),
+            rewrite_exec("bin/foo", root, false),
             "/home/u/.local/opt/foo/bin/foo"
         );
+    }
+
+    #[test]
+    fn rewrite_exec_appimage_apprun() {
+        // The AppImage convention: Exec=AppRun means the image itself.
+        let img = Path::new("/home/u/Applications/app-x86_64.AppImage");
+        assert_eq!(rewrite_exec("AppRun", img, true), "/home/u/Applications/app-x86_64.AppImage");
+        assert_eq!(
+            rewrite_exec("AppRun %F", img, true),
+            "/home/u/Applications/app-x86_64.AppImage %F"
+        );
+        // Absolute paths still pass through.
+        assert_eq!(rewrite_exec("/usr/bin/app", img, true), "/usr/bin/app");
     }
 
     #[test]
