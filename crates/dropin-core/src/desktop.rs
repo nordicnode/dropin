@@ -217,16 +217,56 @@ fn install_icon(icon_ref: &str, slug: &str, install_root: &Path) -> Option<PathB
 
 /// Generate a bare-bones entry when the app ships none.
 pub fn generate_entry(app_name: &str, slug: &str, exec: &Path) -> Result<(PathBuf, Vec<PathBuf>)> {
+    generate_entry_with_category(app_name, slug, exec, None)
+}
+
+/// Generate a .desktop entry with an explicit category (e.g., "Game;").
+pub fn generate_entry_with_category(
+    app_name: &str,
+    slug: &str,
+    exec: &Path,
+    category: Option<&str>,
+) -> Result<(PathBuf, Vec<PathBuf>)> {
     let entry = DesktopEntry {
         name: app_name.to_string(),
         exec: exec.display().to_string(),
         icon: None,
         comment: Some(format!("Installed with dropin ({})", slug)),
-        categories: None,
-        terminal: false,
+        categories: category.map(|c| c.to_string()),
+        terminal: is_terminal_app(exec),
     };
     let path = entry.write(slug)?;
     Ok((path.clone(), vec![path]))
+}
+
+/// Heuristic: does this executable need a terminal?
+/// Checks for ncurses linkage (curses apps) or script with shebang.
+fn is_terminal_app(exec: &Path) -> bool {
+    // Scripts are typically terminal-based.
+    if is_script(exec) {
+        return true;
+    }
+    // Check for ncurses linkage via ldd (curses = terminal UI).
+    if let Ok(output) = std::process::Command::new("ldd").arg(exec).output() {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            if stdout.contains("libncurses") || stdout.contains("libtinfo") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_script(path: &Path) -> bool {
+    let mut buf = [0u8; 2];
+    use std::io::Read;
+    if let Ok(mut f) = std::fs::File::open(path) {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf == *b"#!";
+        }
+    }
+    false
 }
 
 #[cfg(test)]

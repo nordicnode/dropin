@@ -2,7 +2,7 @@
 //! install it rootless into ~/.local/opt/<app>.
 
 use super::{assert_safe_member, sha256_of, InstallOptions, InstallOutcome, InstallPlan};
-use crate::desktop::{adopt_desktop_file, generate_entry, parse_desktop_file};
+use crate::desktop::{adopt_desktop_file, parse_desktop_file};
 use crate::{detect, slugify, Error, Result, UserDirs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -543,10 +543,7 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
         version: None,
         steps: vec![
             format!("Extract to ~/.local/opt/{slug}"),
-            format!(
-                "Link executables into ~/.local/bin ({})",
-                sniff.executables.len()
-            ),
+            "Link the main executable into ~/.local/bin".into(),
             "Adopt or generate an application menu entry".into(),
         ],
         needs_root: false,
@@ -630,11 +627,19 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
                 let (_, mut extra) = adopt_desktop_file(&df_path, &slug, &d.name_hint, &root)?;
                 paths.append(&mut extra);
             } else if let Some(bin) = &main_bin {
-                let (_, mut extra) = generate_entry(&d.name_hint, &slug, bin)?;
+                let category = guess_category(&d.name_hint, bin);
+                let (_, mut extra) = crate::desktop::generate_entry_with_category(
+                    &d.name_hint,
+                    &slug,
+                    bin,
+                    category,
+                )?;
                 paths.append(&mut extra);
             }
         } else if let Some(bin) = &main_bin {
-            let (_, mut extra) = generate_entry(&d.name_hint, &slug, bin)?;
+            let category = guess_category(&d.name_hint, bin);
+            let (_, mut extra) =
+                crate::desktop::generate_entry_with_category(&d.name_hint, &slug, bin, category)?;
             paths.append(&mut extra);
         }
         let _ = linked;
@@ -675,6 +680,37 @@ fn choose_desktop(sniff: &Sniff, slug: &str) -> Option<String> {
 
 /// Prefer an executable whose name matches the app, else the shallowest one
 /// (excluding anything under lib/ or resources/).
+/// Guess the .desktop category: games get "Game;", others default to Utility.
+/// Heuristic: Windows .exes in archives are usually games; also check the name.
+fn guess_category(name_hint: &str, bin: &Path) -> Option<&'static str> {
+    // Windows executable in a zip/tarball: very likely a game.
+    if is_windows_exe(bin) {
+        return Some("Game;");
+    }
+    // Name-based heuristic for common game terms.
+    let lower = name_hint.to_lowercase();
+    let game_terms = [
+        "game",
+        "play",
+        "quest",
+        "adventure",
+        "rpg",
+        "shooter",
+        "puzzle",
+        "arcade",
+        "rogue",
+        "roguelike",
+        "dungeon",
+        "brogue",
+        "nethack",
+        "angband",
+    ];
+    if game_terms.iter().any(|t| lower.contains(t)) {
+        return Some("Game;");
+    }
+    None // Defaults to Utility; in DesktopEntry::write
+}
+
 fn choose_binary(sniff: &Sniff, slug: &str, name_hint: &str) -> Option<String> {
     if sniff.executables.is_empty() {
         return None;

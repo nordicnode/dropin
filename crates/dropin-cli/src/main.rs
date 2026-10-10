@@ -96,6 +96,21 @@ enum Cmd {
         /// Name of the app to launch.
         name: String,
     },
+    /// Adopt an already-installed game folder (Lutris-style "add existing game").
+    /// Scans for the main executable and registers it without moving files.
+    Adopt {
+        /// Path to the game folder.
+        dir: PathBuf,
+        /// Main executable (relative to dir). Auto-detected if omitted.
+        #[arg(long)]
+        exe: Option<String>,
+        /// Custom display name. Defaults to the folder name.
+        #[arg(long)]
+        name: Option<String>,
+        /// For Windows games: force Proton (game) or Wine (app). Auto-detected if omitted.
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["game", "app"]))]
+        kind: Option<String>,
+    },
     /// Set an environment variable for an app (used when launching).
     SetEnv {
         /// Name of the app.
@@ -328,6 +343,43 @@ fn run() -> dropin_core::Result<()> {
         Cmd::Launch { name } => {
             let msg = install::launch(&name)?;
             println!("{msg}");
+            Ok(())
+        }
+        Cmd::Adopt {
+            dir,
+            exe,
+            name,
+            kind,
+        } => {
+            let is_game = kind.as_deref().map(|k| k == "game");
+            let opts = dropin_core::adopt::AdoptOptions {
+                main_exe: exe,
+                is_game,
+                name,
+            };
+            // Scan first to show what was found.
+            let scan = dropin_core::adopt::scan_dir(&dir)?;
+            if scan.executables.is_empty() {
+                return Err(dropin_core::Error::Refused(format!(
+                    "No executables found in {}.",
+                    dir.display()
+                )));
+            }
+            println!(
+                "Found {} executable{} in {}.",
+                scan.executables.len(),
+                if scan.executables.len() == 1 { "" } else { "s" },
+                dir.display()
+            );
+            let outcome = dropin_core::adopt::adopt(&dir, &opts)?;
+            println!(
+                "Adopted '{}' ({}).",
+                outcome.name,
+                outcome.main_exe.display()
+            );
+            if outcome.is_windows {
+                println!("Windows game: will run via Wine/Proton.");
+            }
             Ok(())
         }
         Cmd::SetEnv { name, key, value } => {

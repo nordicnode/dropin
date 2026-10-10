@@ -67,7 +67,29 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     };
     ledger.record(&crate::ledger::NewInstall {
         name: outcome.name.clone(),
-        format: d.format.label().to_string(),
+        format: {
+            // For archives, include the specific file type (e.g., "tar.gz" not just "compressed archive").
+            let base = d.format.label();
+            if matches!(d.format, Format::Tarball | Format::Zip) {
+                if let Some(ext) = src.extension().and_then(|e| e.to_str()) {
+                    // Handle compound extensions like .tar.gz
+                    let fname = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if fname.ends_with(".tar.gz") {
+                        "tar.gz archive".to_string()
+                    } else if fname.ends_with(".tar.bz2") {
+                        "tar.bz2 archive".to_string()
+                    } else if fname.ends_with(".tar.xz") {
+                        "tar.xz archive".to_string()
+                    } else {
+                        format!("{ext} archive")
+                    }
+                } else {
+                    base.to_string()
+                }
+            } else {
+                base.to_string()
+            }
+        },
         version: outcome.version.clone(),
         source_path: src.to_path_buf(),
         source_sha256: sha256,
@@ -270,18 +292,87 @@ pub fn launch(name: &str) -> Result<String> {
     // Apply per-app environment variables.
     let env = ledger.env_vars(&slug).unwrap_or_default();
 
+    // For ELF binaries: check for missing shared libraries before launching.
+    // This catches the common "error while loading shared libraries" failure.
+    if is_elf(&exe) {
+        if let Ok(output) = std::process::Command::new("ldd").arg(&exe).output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let missing: Vec<&str> = stdout
+                    .lines()
+                    .filter(|l| l.contains("not found"))
+                    .filter_map(|l| l.split_whitespace().next())
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(Error::Command(format!(
+                        "Couldn't launch '{}': missing shared libraries: {}. Install them via your system package manager, then try again.",
+                        name,
+                        missing.join(", ")
+                    )));
+                }
+            }
+        }
+    }
+
     let mut cmd = std::process::Command::new(&exe);
     cmd.args(&args);
     for (k, v) in &env {
         cmd.env(k, v);
     }
-    // Detach: don't wait, don't inherit stdio.
+    // Detach: don't inherit stdio, but keep stderr piped briefly to catch
+    // immediate crashes.
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    cmd.spawn()
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd
+        .spawn()
         .map_err(|e| Error::Command(format!("couldn't launch {name}: {e}")))?;
+
+    // Wait briefly to catch immediate crashes (e.g., missing libs, bad exec).
+    // If the process exits within 500ms, report the error instead of "Launched".
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            // Process exited immediately.
+            let mut stderr = String::new();
+            if let Some(mut err) = child.stderr.take() {
+                use std::io::Read;
+                let _ = err.read_to_string(&mut stderr);
+            }
+            let code = status.code().unwrap_or(-1);
+            let err_msg = if stderr.trim().is_empty() {
+                format!("exited immediately with status {code}")
+            } else {
+                format!(
+                    "exited immediately with status {code}: {}",
+                    stderr.trim().lines().next().unwrap_or("")
+                )
+            };
+            return Err(Error::Command(format!(
+                "Couldn't launch '{name}': {err_msg}."
+            )));
+        }
+        Ok(None) => {
+            // Still running: detach and report success.
+            // (We leave the child running; the OS reaps it on exit.)
+        }
+        Err(e) => {
+            return Err(Error::Command(format!("Couldn't launch '{name}': {e}")));
+        }
+    }
     Ok(format!("Launched '{name}'."))
+}
+
+/// Check if a file is an ELF binary (by magic bytes).
+fn is_elf(path: &Path) -> bool {
+    let mut buf = [0u8; 4];
+    use std::io::Read;
+    if let Ok(mut f) = std::fs::File::open(path) {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf == [0x7f, b'E', b'L', b'F'];
+        }
+    }
+    false
 }
 
 /// The result of checking one app for updates.

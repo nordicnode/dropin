@@ -283,9 +283,23 @@ pub fn adopt(game_dir: &Path, opts: &AdoptOptions) -> Result<AdoptOutcome> {
     paths.append(&mut desktop_extra);
 
     // Symlink into ~/.local/bin.
+    // If the binary name collides with an existing file, fall back to the
+    // slug name so the adopted game still gets a launcher.
     if let Some(bin_name) = launch_exe.file_name() {
-        let link = dirs.bin.join(bin_name);
-        if !link.exists() && !link.is_symlink() {
+        let bin_name = bin_name.to_string_lossy();
+        let mut link = dirs.bin.join(bin_name.as_ref());
+        if link.exists() || link.is_symlink() {
+            // Collision: try slug-based name.
+            let alt = dirs.bin.join(&slug);
+            if !alt.exists() && !alt.is_symlink() {
+                link = alt;
+            } else {
+                // Both taken; skip the symlink (don't overwrite user's files).
+                // The .desktop entry still works.
+                link = PathBuf::new(); // sentinel for "skip"
+            }
+        }
+        if !link.as_os_str().is_empty() {
             #[cfg(unix)]
             {
                 std::os::unix::fs::symlink(&launch_exe, &link)?;
@@ -344,10 +358,16 @@ fn choose_main_exe(scan: &AdoptScan, game_dir: &Path) -> Result<String> {
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         let name_match = stem == dir_name || dir_name.contains(&stem) || stem.contains(&dir_name);
-        // Prefer .exe for Windows, ELF for Linux; avoid uninstallers.
-        let is_uninstaller = stem.contains("uninstall") || stem.contains("unins");
+        // Avoid uninstallers and helper scripts (they're not the game).
+        let is_helper = stem.contains("uninstall")
+            || stem.contains("unins")
+            || stem.contains("make-link")
+            || stem.contains("makelink")
+            || stem.contains("setup")
+            || stem.contains("config")
+            || stem.contains("installer");
         let depth = p.matches('/').count();
-        (!name_match, is_uninstaller, depth, p.len())
+        (!name_match, is_helper, depth, p.len())
     });
     Ok(cands.into_iter().next().unwrap())
 }
