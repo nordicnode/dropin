@@ -143,9 +143,8 @@ impl DropinApp {
                 Ok(o) => InstallResult {
                     ok: true,
                     message: format!(
-                        "Installed to your user directories{}\n\nRemove anytime with:\n    dropin remove {}",
+                        "Installed to your user directories{}\n\nManage it anytime in the dropin manager.",
                         if o.external { " (tracked as external)" } else { "" },
-                        o.name
                     ),
                     app_name: o.name,
                 },

@@ -37,7 +37,7 @@ enum Cmd {
         #[arg(long)]
         purge: bool,
     },
-    /// Check installed apps for updates (on demand only, never in background).
+    /// Check installed apps for updates (the GUI manager can also auto-check on launch).
     Update {
         /// Update a single app by name.
         name: Option<String>,
