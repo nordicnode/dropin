@@ -1528,6 +1528,11 @@ impl ManagerApp {
                                     ui.label(r);
                                     ui.end_row();
                                 }
+                                ui.label(
+                                    egui::RichText::new("Category").color(style::color::TEXT_DIM),
+                                );
+                                ui.label(&app.category);
+                                ui.end_row();
                             });
                         if !app.env_vars.is_empty() {
                             ui.add_space(8.0);

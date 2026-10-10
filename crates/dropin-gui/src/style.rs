@@ -203,6 +203,25 @@ pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
 /// Find the installed icon for an app by slug.
 /// Icons are saved as ~/.local/share/icons/hicolor/256x256/apps/dropin-{slug}.{ext}.
 pub fn find_app_icon(slug: &str) -> Option<std::path::PathBuf> {
+    // First, check the .desktop file's Icon= field directly.
+    let desktop_path = dropin_core::home_dir()
+        .join(".local/share/applications")
+        .join(format!("dropin-{slug}.desktop"));
+    if let Ok(text) = std::fs::read_to_string(&desktop_path) {
+        for line in text.lines() {
+            if let Some(icon) = line.strip_prefix("Icon=") {
+                let icon = icon.trim();
+                // Absolute path.
+                if icon.starts_with('/') {
+                    let p = std::path::PathBuf::from(icon);
+                    if p.exists() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: look for dropin-{slug}.* in the icons dir.
     let icons_dir = dropin_core::home_dir().join(".local/share/icons/hicolor/256x256/apps");
     // Try common extensions.
     for ext in ["png", "svg", "xpm", "ico"] {
