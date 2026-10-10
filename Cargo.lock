@@ -1419,7 +1419,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dropin-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "dropin-core",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "dropin-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "backhand",
  "bzip2 0.4.4",
@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "dropin-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dropin-core",
  "eframe",
