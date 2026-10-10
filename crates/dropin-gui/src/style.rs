@@ -64,7 +64,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     visuals.override_text_color = Some(color::TEXT);
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, color::TEXT_DIM);
 
-    // Widget backgrounds: subtle, bordered.
+    // Widget states: subtle elevation on hover, clear active state.
     for w in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -75,30 +75,52 @@ pub fn apply_theme(ctx: &egui::Context) {
         w.bg_fill = color::CARD;
         w.bg_stroke = egui::Stroke::new(1.0_f32, color::BORDER);
         w.corner_radius = egui::CornerRadius::same(8);
+        w.fg_stroke = egui::Stroke::new(1.0_f32, color::TEXT);
     }
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(38, 43, 53);
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(42, 48, 59);
+    // Hover: lift slightly.
+    visuals.widgets.hovered.bg_fill = color::OVERLAY;
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, color::BORDER_STRONG);
+    // Active/pressed: subtle.
+    visuals.widgets.active.bg_fill = color::BORDER;
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, color::BORDER_STRONG);
+    // Focus: accent ring.
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.5_f32, color::ACCENT);
 
     // Selection.
     visuals.selection.bg_fill = color::ACCENT;
     visuals.selection.stroke = egui::Stroke::new(1.0_f32, color::ACCENT);
 
     // Links.
-    visuals.hyperlink_color = color::ACCENT;
+    visuals.hyperlink_color = color::ACCENT_TEXT;
+
+    // Subtle shadows for depth.
+    visuals.popup_shadow = egui::Shadow {
+        offset: [0, 8],
+        blur: 24,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(120),
+    };
+    visuals.window_shadow = egui::Shadow {
+        offset: [0, 12],
+        blur: 32,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(140),
+    };
 
     ctx.set_visuals(visuals);
 
-    // Spacing and typography.
+    // Spacing and typography: generous whitespace, clear hierarchy.
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-    style.spacing.button_padding = egui::vec2(14.0, 8.0);
-    style.spacing.window_margin = egui::Margin::same(20);
+    style.spacing.item_spacing = egui::vec2(12.0, 10.0);
+    style.spacing.button_padding = egui::vec2(16.0, 10.0);
+    style.spacing.window_margin = egui::Margin::same(24);
     style.spacing.menu_margin = egui::Margin::same(12);
+    style.spacing.indent = 20.0;
 
-    // Slightly larger default text for readability.
+    // Typography scale.
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(22.0, egui::FontFamily::Proportional),
+        egui::FontId::new(24.0, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Body,
@@ -121,11 +143,17 @@ pub fn apply_theme(ctx: &egui::Context) {
 }
 
 /// A primary action button (Install, Confirm, ...). Returns clicked.
+/// Uses the brand emerald accent; 40px tall for comfortable clicking.
 pub fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(label).strong().color(color::TEXT))
-        .fill(color::ACCENT)
-        .corner_radius(8.0)
-        .min_size(egui::vec2(120.0, 36.0));
+    let btn = egui::Button::new(
+        egui::RichText::new(label)
+            .strong()
+            .size(14.0)
+            .color(egui::Color32::from_rgb(6, 10, 8)),
+    )
+    .fill(color::ACCENT)
+    .corner_radius(10.0)
+    .min_size(egui::vec2(120.0, 40.0));
     ui.add(btn)
 }
 
@@ -133,24 +161,46 @@ pub fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 pub fn primary_button_enabled(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(egui::RichText::new(label).strong().color(color::TEXT))
-            .fill(if enabled {
-                color::ACCENT
-            } else {
-                color::BORDER
-            })
-            .corner_radius(8.0)
-            .min_size(egui::vec2(120.0, 36.0)),
+        egui::Button::new(
+            egui::RichText::new(label)
+                .strong()
+                .size(14.0)
+                .color(if enabled {
+                    egui::Color32::from_rgb(6, 10, 8)
+                } else {
+                    color::TEXT_FAINT
+                }),
+        )
+        .fill(if enabled { color::ACCENT } else { color::CARD })
+        .stroke(if enabled {
+            egui::Stroke::NONE
+        } else {
+            egui::Stroke::new(1.0, color::BORDER)
+        })
+        .corner_radius(10.0)
+        .min_size(egui::vec2(120.0, 40.0)),
     )
 }
 
-/// A quiet secondary button.
+/// A secondary button: bordered, subtle.
+pub fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).size(14.0).color(color::TEXT))
+            .fill(color::CARD)
+            .stroke(egui::Stroke::new(1.0, color::BORDER_STRONG))
+            .corner_radius(10.0)
+            .min_size(egui::vec2(100.0, 40.0)),
+    )
+}
+
+/// A quiet tertiary button: no background, just text.
 pub fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(egui::RichText::new(label).color(color::TEXT_DIM))
+        egui::Button::new(egui::RichText::new(label).size(14.0).color(color::TEXT_DIM))
             .fill(egui::Color32::TRANSPARENT)
+            .stroke(egui::Stroke::NONE)
             .corner_radius(8.0)
-            .min_size(egui::vec2(80.0, 32.0)),
+            .min_size(egui::vec2(80.0, 36.0)),
     )
 }
 
@@ -164,9 +214,33 @@ pub fn tools_menu_button<R>(
     ui.menu_button(egui::RichText::new("…").size(20.0).strong(), add_contents)
 }
 
+/// A polished search field.
+pub fn search_field(ui: &mut egui::Ui, text: &mut String, id: egui::Id) -> egui::Response {
+    egui::Frame::NONE
+        .fill(color::CARD)
+        .stroke(egui::Stroke::new(1.0, color::BORDER))
+        .corner_radius(10.0)
+        .inner_margin(egui::Margin {
+            left: 14,
+            right: 14,
+            top: 9,
+            bottom: 9,
+        })
+        .show(ui, |ui| {
+            ui.set_width(200.0);
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .hint_text("Search apps…  (Ctrl+F)")
+                    .desired_width(180.0)
+                    .id(id)
+                    .frame(false), // No inner frame, we draw our own.
+            )
+        })
+        .inner
+}
+
 /// A dropdown button with vertically centered text, for filter rows.
-/// egui's ComboBox can render text slightly high; this uses a plain
-/// Button with explicit centering for pixel-perfect alignment.
+/// Uses a plain Button with explicit sizing for pixel-perfect alignment.
 pub fn filter_dropdown<R>(
     ui: &mut egui::Ui,
     selected_text: &str,
@@ -175,31 +249,38 @@ pub fn filter_dropdown<R>(
 ) -> egui::InnerResponse<Option<R>> {
     let button_text = format!("{selected_text}  v");
     let resp = ui.add_sized(
-        [width, 32.0],
-        egui::Button::new(egui::RichText::new(button_text).size(14.0)).corner_radius(8.0),
+        [width, 36.0],
+        egui::Button::new(egui::RichText::new(button_text).size(14.0)).corner_radius(10.0),
     );
     let inner = egui::Popup::menu(&resp).show(add_contents);
     egui::InnerResponse::new(inner.map(|i| i.inner), resp)
 }
 
 /// A small pill badge, e.g. the format tag or version.
-pub fn badge(ui: &mut egui::Ui, text: &str, bg: egui::Color32) {
+/// Subtle tinted background with colored text, not a solid fill.
+pub fn badge(ui: &mut egui::Ui, text: &str, tint: egui::Color32) {
+    // Tinted background: mix the tint color with the card at low opacity.
+    let bg = egui::Color32::from_rgba_unmultiplied(
+        tint.r(),
+        tint.g(),
+        tint.b(),
+        32, // ~12% opacity
+    );
     egui::Frame::NONE
         .fill(bg)
-        .corner_radius(6.0)
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), 80),
+        ))
+        .corner_radius(20.0)
         .inner_margin(egui::Margin {
-            left: 8,
-            right: 8,
-            top: 3,
-            bottom: 3,
+            left: 10,
+            right: 10,
+            top: 4,
+            bottom: 4,
         })
         .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(text)
-                    .small()
-                    .strong()
-                    .color(color::TEXT),
-            );
+            ui.label(egui::RichText::new(text).small().strong().color(tint));
         });
 }
 
@@ -223,6 +304,7 @@ pub fn format_color(format: &str) -> egui::Color32 {
 }
 
 /// Draw the app icon badge: rounded square with the initial.
+/// Uses a subtle vertical gradient for depth.
 pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
     let initial = name
         .chars()
@@ -231,14 +313,35 @@ pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
         .to_uppercase()
         .to_string();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    // Two-tone: solid fill reads cleaner than a gradient at small sizes.
-    ui.painter().rect_filled(rect, size * 0.22, color::BADGE_A);
+    let radius = size * 0.24;
+    // Subtle gradient: lighter at top.
+    let top_color = color::BADGE_B;
+    let bottom_color = color::BADGE_A;
+    // Draw as two rects for a simple gradient effect.
+    let mid_y = rect.center().y;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, mid_y + radius)),
+        radius,
+        top_color,
+    );
+    ui.painter().rect_filled(
+        egui::Rect::from_min_max(egui::pos2(rect.min.x, mid_y - radius), rect.max),
+        radius,
+        bottom_color,
+    );
+    // Cover the seam with a clean rounded rect outline.
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, color::BORDER_STRONG),
+        egui::StrokeKind::Inside,
+    );
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         initial,
-        egui::FontId::proportional(size * 0.48),
-        egui::Color32::WHITE,
+        egui::FontId::proportional(size * 0.46),
+        color::TEXT,
     );
 }
 
@@ -303,12 +406,19 @@ pub fn app_icon(ui: &mut egui::Ui, slug: &str, name: &str, size: f32) {
 }
 
 /// A card frame for app rows and sections.
+/// Elevated surface with subtle border and generous padding.
 pub fn card_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(color::CARD)
         .stroke(egui::Stroke::new(1.0_f32, color::BORDER))
-        .corner_radius(10.0)
-        .inner_margin(16.0)
+        .corner_radius(12.0)
+        .inner_margin(20.0)
+        .shadow(egui::Shadow {
+            offset: [0, 2],
+            blur: 12,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(60),
+        })
 }
 
 /// Section heading with a subtle divider underneath.

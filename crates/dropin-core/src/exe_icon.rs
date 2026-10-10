@@ -35,7 +35,11 @@ fn reassemble_ico(pe_bytes: &[u8]) -> Option<Vec<u8>> {
             .iter()
             .map(|e| {
                 let w = if e.bWidth == 0 { 256 } else { e.bWidth as u32 };
-                let h = if e.bHeight == 0 { 256 } else { e.bHeight as u32 };
+                let h = if e.bHeight == 0 {
+                    256
+                } else {
+                    e.bHeight as u32
+                };
                 w * h
             })
             .max()
@@ -217,7 +221,7 @@ mod tests {
         pe.extend_from_slice(&[0u8; 12]); // timestamp, symtab, symcount
         pe.extend_from_slice(&224u16.to_le_bytes()); // size of optional header
         pe.extend_from_slice(&0x010Fu16.to_le_bytes()); // characteristics
-        // Optional header PE32 (224 bytes).
+                                                        // Optional header PE32 (224 bytes).
         let opt_start = pe.len();
         pe.extend_from_slice(&0x10Bu16.to_le_bytes()); // magic
         pe.resize(opt_start + 224, 0);

@@ -508,11 +508,16 @@ impl eframe::App for ManagerApp {
 
         // ---- toolbar ----
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.add_space(8.0);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                // Brand, with room to breathe.
-                ui.label(egui::RichText::new("dropin").size(22.0).strong());
-                ui.add_space(28.0);
+                // Brand: distinctive, with room to breathe.
+                ui.label(
+                    egui::RichText::new("dropin")
+                        .size(24.0)
+                        .strong()
+                        .color(style::color::TEXT),
+                );
+                ui.add_space(32.0);
                 // Primary actions.
                 if style::primary_button_enabled(ui, !busy, "Install app…").clicked() && !busy {
                     if let Some(paths) = rfd::FileDialog::new()
@@ -545,16 +550,12 @@ impl eframe::App for ManagerApp {
                     ui.add_space(avail - right_width);
                 }
                 ui.horizontal(|ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("Search apps… (Ctrl+F)")
-                            .desired_width(180.0)
-                            .id(egui::Id::new("search_field")),
-                    );
+                    let resp =
+                        style::search_field(ui, &mut self.search, egui::Id::new("search_field"));
                     if resp.changed() {
                         self.selected.clear();
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
                     style::tools_menu_button(ui, |ui| {
                         ui.set_min_width(180.0);
                         if ui.button("Doctor").clicked() && !busy {
@@ -678,16 +679,30 @@ impl eframe::App for ManagerApp {
             ui.add_space(8.0);
             if self.apps.is_empty() {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(60.0);
+                    ui.add_space(80.0);
                     ui.label(
                         egui::RichText::new("No apps installed yet")
-                            .size(18.0)
-                            .strong(),
+                            .size(22.0)
+                            .strong()
+                            .color(style::color::TEXT),
                     );
-                    ui.add_space(8.0);
-                    style::dim_label(
+                    ui.add_space(12.0);
+                    style::dim_label(ui, "Install your first app to get started.");
+                    ui.add_space(24.0);
+                    if style::primary_button(ui, "Install app…").clicked() {
+                        if let Some(paths) = rfd::FileDialog::new()
+                            .set_title("Choose files to install")
+                            .pick_files()
+                        {
+                            for path in paths {
+                                self.spawn_installer(&path);
+                            }
+                        }
+                    }
+                    ui.add_space(16.0);
+                    style::faint_label(
                         ui,
-                        "Click “Install app…” above, or double-click any installer file.",
+                        "…or double-click any installer file in your file manager.",
                     );
                     ui.add_space(8.0);
                     style::faint_label(ui, "You can also drag and drop files onto this window.");
@@ -745,12 +760,15 @@ impl eframe::App for ManagerApp {
             }
             if filtered.is_empty() {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
+                    ui.add_space(60.0);
                     ui.label(
                         egui::RichText::new("No apps match your search")
-                            .size(16.0)
-                            .strong(),
+                            .size(20.0)
+                            .strong()
+                            .color(style::color::TEXT),
                     );
+                    ui.add_space(8.0);
+                    style::dim_label(ui, "Try a different search term.");
                 });
                 return;
             }
@@ -773,9 +791,7 @@ impl eframe::App for ManagerApp {
                 }
                 ui.horizontal(|ui| {
                     // Select mode toggle.
-                    if ui.checkbox(&mut self.select_mode, "Select").changed()
-                        && !self.select_mode
-                    {
+                    if ui.checkbox(&mut self.select_mode, "Select").changed() && !self.select_mode {
                         self.selected.clear();
                     }
                     ui.add_space(8.0);
@@ -837,22 +853,14 @@ impl eframe::App for ManagerApp {
                         let cats_clone = categories.clone();
                         style::filter_dropdown(ui, &cat_label, 120.0, |ui| {
                             if ui
-                                .selectable_value(
-                                    &mut self.category_filter,
-                                    None,
-                                    "All categories",
-                                )
+                                .selectable_value(&mut self.category_filter, None, "All categories")
                                 .clicked()
                             {
                                 self.selected.clear();
                             }
                             for c in &cats_clone {
                                 if ui
-                                    .selectable_value(
-                                        &mut self.category_filter,
-                                        Some(c.clone()),
-                                        c,
-                                    )
+                                    .selectable_value(&mut self.category_filter, Some(c.clone()), c)
                                     .clicked()
                                 {
                                     self.selected.clear();
@@ -923,46 +931,58 @@ impl ManagerApp {
 
         style::card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
-                style::app_icon(ui, &app.name, &app.name, 48.0);
-                ui.add_space(8.0);
+                style::app_icon(ui, &app.name, &app.name, 52.0);
+                ui.add_space(16.0);
                 ui.vertical(|ui| {
+                    // App name: prominent, with verification check.
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&app.name).size(17.0).strong());
+                        ui.label(
+                            egui::RichText::new(&app.name)
+                                .size(18.0)
+                                .strong()
+                                .color(style::color::TEXT),
+                        );
                         if app.verified {
-                            ui.label(egui::RichText::new("✓").color(style::color::GOOD).strong());
+                            ui.label(
+                                egui::RichText::new("✓")
+                                    .size(16.0)
+                                    .color(style::color::GOOD)
+                                    .strong(),
+                            );
                         }
                     });
-                    ui.add_space(2.0);
+                    ui.add_space(6.0);
+                    // Badges: format, version, status.
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
                         style::badge(ui, &app.format, style::format_color(&app.format));
                         if let Some(v) = &app.version {
-                            style::badge(ui, &format!("v{v}"), style::color::BORDER);
+                            style::badge(ui, &format!("v{v}"), style::color::TEXT_DIM);
                         }
                         if app.has_env {
                             style::badge(ui, "env", style::color::INFO);
                         }
                         if app.has_update {
-                            style::badge(ui, "update", style::color::WARN);
+                            style::badge(ui, "update available", style::color::WARN);
                         }
                         if app.recently_updated {
                             style::badge(ui, "updated", style::color::GOOD);
                         }
                     });
+                    // Metadata: subtle, secondary.
+                    let mut meta = Vec::new();
                     if let Some(repo) = &app.github_repo {
-                        ui.add_space(2.0);
-                        style::faint_label(ui, &format!("tracking {repo}"));
+                        meta.push(format!("tracking {repo}"));
                     }
-                    // Size and install date, subtle.
-                    if app.size.is_some() || app.installed_on.is_some() {
-                        ui.add_space(2.0);
-                        let mut meta = Vec::new();
-                        if let Some(s) = &app.size {
-                            meta.push(s.clone());
-                        }
-                        if let Some(d) = &app.installed_on {
-                            meta.push(format!("installed {d}"));
-                        }
-                        style::faint_label(ui, &meta.join(" · "));
+                    if let Some(s) = &app.size {
+                        meta.push(s.clone());
+                    }
+                    if let Some(d) = &app.installed_on {
+                        meta.push(format!("installed {d}"));
+                    }
+                    if !meta.is_empty() {
+                        ui.add_space(6.0);
+                        style::faint_label(ui, &meta.join("  ·  "));
                     }
                 });
                 // Primary action: Launch. Everything else in the … menu.
