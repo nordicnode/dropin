@@ -64,7 +64,10 @@ fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> 
         if inst.format != "AppImage" {
             continue;
         }
-        let desktop = dirs.desktop_entries.join(format!("{}.desktop", inst.name));
+        // Menu entries are written as dropin-<slug>.desktop.
+        let desktop = dirs
+            .desktop_entries
+            .join(format!("dropin-{}.desktop", inst.name));
         let text = match std::fs::read_to_string(&desktop) {
             Ok(t) => t,
             Err(_) => continue,
@@ -486,7 +489,7 @@ mod tests {
         let img = dirs.applications.join("app.AppImage");
         std::fs::write(&img, b"fake").unwrap();
         std::fs::write(
-            dirs.desktop_entries.join("myapp.desktop"),
+            dirs.desktop_entries.join("dropin-myapp.desktop"),
             format!("[Desktop Entry]\nName=MyApp\nExec={}/AppRun\n", img.display()),
         )
         .unwrap();
@@ -507,7 +510,7 @@ mod tests {
         let img = dirs.applications.join("app.AppImage");
         std::fs::write(&img, b"fake").unwrap();
         std::fs::write(
-            dirs.desktop_entries.join("myapp.desktop"),
+            dirs.desktop_entries.join("dropin-myapp.desktop"),
             format!("[Desktop Entry]\nName=MyApp\nExec={}\n", img.display()),
         )
         .unwrap();
