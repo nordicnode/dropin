@@ -68,27 +68,47 @@ fn extract(src: &Path, dest: &Path, strip: usize) -> Result<()> {
             std::fs::remove_dir_all(&tmp)?;
         }
         std::fs::create_dir_all(&tmp)?;
-        if let Err(e) = crate::run("unzip", &["-o", s, "-d", tmp.to_str().unwrap()]) {
-            // Translate the technical failure into something actionable.
-            // Common causes: corrupted/incomplete download, disk full, or
-            // an archive format unzip can't handle.
+        let unzip_result = crate::run("unzip", &["-o", s, "-d", tmp.to_str().unwrap()]);
+        if let Err(e) = unzip_result {
             let detail = e.to_string();
-            // Clean up the temp dir so a retry starts fresh.
-            let _ = std::fs::remove_dir_all(&tmp);
-            if detail.contains("cannot find") || detail.contains("No such file") {
-                return Err(Error::Command(
-                    "Couldn't read the zip file. It may have been moved or deleted.".into(),
-                ));
+            // unzip doesn't support zstd (method 93) and other modern methods.
+            // Try 7z as a fallback if available.
+            if detail.contains("unsupported compression method") && crate::have("7z") {
+                // Clean up partial extraction, then try 7z.
+                let _ = std::fs::remove_dir_all(&tmp);
+                std::fs::create_dir_all(&tmp)?;
+                if let Err(e7z) = crate::run("7z", &["x", s, &format!("-o{}", tmp.to_str().unwrap()), "-y"]) {
+                    let _ = std::fs::remove_dir_all(&tmp);
+                    return Err(Error::Command(format!(
+                        "Couldn't extract the zip file with 7z either. It may be corrupted.\n\nDetails: {}",
+                        e7z
+                    )));
+                }
+                // 7z succeeded, continue to move_stripped.
+            } else {
+                // Translate the technical failure into something actionable.
+                // Clean up the temp dir so a retry starts fresh.
+                let _ = std::fs::remove_dir_all(&tmp);
+                if detail.contains("unsupported compression method") {
+                    return Err(Error::Command(
+                        "This zip uses a compression method that isn't supported. Install `p7zip` (which handles more formats) and try again, or re-download the file.".into(),
+                    ));
+                }
+                if detail.contains("cannot find") || detail.contains("No such file") {
+                    return Err(Error::Command(
+                        "Couldn't read the zip file. It may have been moved or deleted.".into(),
+                    ));
+                }
+                if detail.contains("disk") || detail.contains("space") || detail.contains("No space") {
+                    return Err(Error::Command(
+                        "Not enough disk space to extract the zip file.".into(),
+                    ));
+                }
+                // Generic: likely a corrupted or unsupported archive.
+                return Err(Error::Command(format!(
+                    "Couldn't extract the zip file. It may be corrupted or incomplete — try downloading it again.\n\nDetails: {detail}"
+                )));
             }
-            if detail.contains("disk") || detail.contains("space") || detail.contains("No space") {
-                return Err(Error::Command(
-                    "Not enough disk space to extract the zip file.".into(),
-                ));
-            }
-            // Generic: likely a corrupted or unsupported archive.
-            return Err(Error::Command(format!(
-                "Couldn't extract the zip file. It may be corrupted or incomplete — try downloading it again.\n\nDetails: {detail}"
-            )));
         }
         move_stripped(&tmp, dest, strip)?;
         std::fs::remove_dir_all(&tmp)?;

@@ -278,11 +278,22 @@ impl eframe::App for DropinApp {
                     let msg = msg.clone();
                     ui.heading("Can't install this file");
                     ui.add_space(8.0);
-                    ui.label(msg);
+                    // Scrollable area for long error messages.
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            ui.label(&msg);
+                        });
                     ui.add_space(16.0);
-                    if ui.button("Close").clicked() {
-                        next = Next::Exit(1);
-                    }
+                    ui.horizontal(|ui| {
+                        if style::secondary_button(ui, "Copy error").clicked() {
+                            ui.ctx().copy_text(msg.clone());
+                        }
+                        ui.add_space(8.0);
+                        if style::primary_button(ui, "Close").clicked() {
+                            next = Next::Exit(1);
+                        }
+                    });
                 }
                 Phase::Review(st) => {
                     if ui_review(ui, &self.file, st) {
