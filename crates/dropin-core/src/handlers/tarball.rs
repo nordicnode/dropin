@@ -342,8 +342,10 @@ struct Sniff {
 /// Cache of extracted archives: plan() extracts once, install() reuses.
 /// Key: (canonical source path, mtime nanos, file size).
 /// Value: (temp dir, insertion time).
+type CacheKey = (PathBuf, u64, u64);
+type CacheVal = (PathBuf, std::time::Instant);
 static EXTRACTION_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<(PathBuf, u64, u64), (PathBuf, std::time::Instant)>>,
+    std::sync::Mutex<std::collections::HashMap<CacheKey, CacheVal>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 /// Max cached extractions; evict oldest beyond this.
