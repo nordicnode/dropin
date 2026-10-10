@@ -12,6 +12,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 /// One row in the app list.
+#[derive(Clone)]
 struct AppRow {
     name: String,
     format: String,
@@ -62,7 +63,7 @@ pub struct ManagerApp {
     rollback_name: Option<String>,
     doctor_open: bool,
     doctor_issues: Vec<health::HealthIssue>,
-    install_child: Option<std::process::Child>,
+    install_children: Vec<std::process::Child>,
     /// First-run: offer one-click desktop integration.
     show_welcome: bool,
     settings: settings::Settings,
@@ -83,7 +84,7 @@ impl ManagerApp {
             rollback_name: None,
             doctor_open: false,
             doctor_issues: Vec::new(),
-            install_child: None,
+            install_children: Vec::new(),
             show_welcome: !integrate::is_integrated(),
             settings: settings::load(),
             settings_open: false,
@@ -140,17 +141,22 @@ impl ManagerApp {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
-        // An install dialog spawned from here: refresh when it exits.
-        if let Some(child) = &mut self.install_child {
-            match child.try_wait() {
-                Ok(Some(_)) => {
-                    self.install_child = None;
-                    self.refresh();
-                    self.status = "App list refreshed.".to_string();
-                }
-                Ok(None) => {}
-                Err(_) => self.install_child = None,
+        // Install dialogs spawned from here: refresh when any exits.
+        let mut exited = false;
+        self.install_children.retain_mut(|child| match child.try_wait() {
+            Ok(Some(_)) => {
+                exited = true;
+                false
             }
+            Ok(None) => true,
+            Err(_) => {
+                exited = true;
+                false
+            }
+        });
+        if exited {
+            self.refresh();
+            self.status = "App list refreshed.".to_string();
         }
         if let Some(op) = &self.busy {
             if let Ok(done) = op.rx.try_recv() {
@@ -259,9 +265,10 @@ impl eframe::App for ManagerApp {
                 return;
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for app in std::mem::take(&mut self.apps) {
+                for i in 0..self.apps.len() {
+                    // Clone the row: app_card may mutate self (dialogs, ops).
+                    let app = self.apps[i].clone();
                     self.app_card(ui, &app, busy);
-                    self.apps.push(app);
                 }
             });
         });
@@ -275,7 +282,7 @@ impl ManagerApp {
         match std::env::current_exe() {
             Ok(exe) => match std::process::Command::new(exe).arg(path).spawn() {
                 Ok(child) => {
-                    self.install_child = Some(child);
+                    self.install_children.push(child);
                     self.status = "Install dialog opened.".to_string();
                 }
                 Err(e) => self.status = format!("Couldn't open installer: {e}"),
@@ -380,9 +387,11 @@ impl ManagerApp {
                     ui.label("Set up dropin so double-clicking any installer file\njust works, and apps get menu entries?");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Set up dropin").clicked() {
-                            setup = true;
-                        }
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui.button("Set up dropin").clicked() {
+                                setup = true;
+                            }
+                        });
                         if ui.button("Later").clicked() {
                             close = true;
                         }
@@ -419,9 +428,11 @@ impl ManagerApp {
                     ui.text_edit_singleline(&mut self.track_input);
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Track").clicked() {
-                            submit = true;
-                        }
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui.button("Track").clicked() {
+                                submit = true;
+                            }
+                        });
                         if ui.button("Cancel").clicked() {
                             close = true;
                         }
@@ -459,9 +470,11 @@ impl ManagerApp {
                     ui.checkbox(&mut self.remove_purge, "Also move leftover config/cache/data to the trash");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Remove").clicked() {
-                            confirm = true;
-                        }
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui.button("Remove").clicked() {
+                                confirm = true;
+                            }
+                        });
                         if ui.button("Cancel").clicked() {
                             close = true;
                         }
@@ -499,9 +512,11 @@ impl ManagerApp {
                     ui.label(egui::RichText::new("The current version is kept as a snapshot, so this is reversible.").weak());
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Roll back").clicked() {
-                            confirm = true;
-                        }
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui.button("Roll back").clicked() {
+                                confirm = true;
+                            }
+                        });
                         if ui.button("Cancel").clicked() {
                             close = true;
                         }
@@ -576,7 +591,5 @@ impl ManagerApp {
                 self.doctor_open = false;
             }
         }
-
-        let _ = busy;
     }
 }

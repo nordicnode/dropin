@@ -367,8 +367,10 @@ fn sha1_file(path: &Path) -> Result<String> {
 
 fn chrono_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    format!("{secs}")
+    // Nanoseconds: two snapshots in the same second must not overwrite
+    // each other.
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    format!("{nanos}")
 }
 
 #[cfg(test)]

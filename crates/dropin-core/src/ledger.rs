@@ -240,6 +240,20 @@ impl Ledger {
         Ok(())
     }
 
+    /// Rename a ledger entry, keeping its files and metadata. Used when an
+    /// update's detected app name differs from the name the user knows —
+    /// the entry keeps the original name so no duplicate appears.
+    pub fn rename(&self, old: &str, new: &str) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE installs SET name = ?1 WHERE name = ?2",
+            params![new, old],
+        )?;
+        if n == 0 {
+            return Err(Error::NotInstalled(old.to_string()));
+        }
+        Ok(())
+    }
+
     /// Record the installed version (e.g. the GitHub tag just installed).
     pub fn set_version(&self, name: &str, version: &str) -> Result<()> {
         let n = self.conn.execute(
@@ -302,6 +316,31 @@ mod tests {
         assert_eq!(ledger.list().unwrap().len(), 1);
         ledger.forget("demo").unwrap();
         assert!(ledger.get("demo").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_keeps_files_and_metadata() {
+        let dir = std::env::temp_dir().join(format!("dropin-ledger-rn-{}", std::process::id()));
+        let ledger = Ledger::open_at(&dir.join("ledger.db")).unwrap();
+        ledger
+            .record(&NewInstall {
+                name: "newname".into(),
+                format: "AppImage".into(),
+                version: Some("2.0".into()),
+                source_path: PathBuf::from("/tmp/new.AppImage"),
+                github_repo: Some("owner/repo".into()),
+                files: vec![PathBuf::from("/tmp/new.desktop")],
+                ..Default::default()
+            })
+            .unwrap();
+        ledger.rename("newname", "oldname").unwrap();
+        assert!(ledger.get("newname").is_err());
+        let got = ledger.get("oldname").unwrap();
+        assert_eq!(got.version.as_deref(), Some("2.0"));
+        assert_eq!(got.github_repo.as_deref(), Some("owner/repo"));
+        assert_eq!(got.files, vec!["/tmp/new.desktop".to_string()]);
+        assert!(ledger.rename("missing", "x").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

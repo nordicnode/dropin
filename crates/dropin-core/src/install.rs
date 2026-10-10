@@ -170,7 +170,8 @@ pub enum UpdateStatus {
 }
 
 /// Check for updates. `name` selects one app, `all` covers everything.
-/// Never runs in the background — only when the user asks.
+/// The GUI manager may run this automatically on launch (user-configurable);
+/// the CLI only runs it when asked.
 pub fn update(name: Option<&str>, all: bool) -> Result<Vec<UpdateReport>> {
     let ledger = Ledger::open()?;
     let targets: Vec<crate::ledger::Install> = match (name, all) {
@@ -350,12 +351,14 @@ pub fn rollback(name: &str) -> Result<String> {
     let latest = snaps.pop().unwrap();
 
     // Snapshot the current file first: rolling back must not destroy it.
-    let secs = std::time::SystemTime::now()
+    // Nanosecond resolution: two snapshots in the same second must not
+    // overwrite each other.
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     let file_name = local.file_name().and_then(|n| n.to_str()).unwrap_or("appimage");
-    let current_bak = snap_dir.join(format!("{file_name}-{secs}.bak"));
+    let current_bak = snap_dir.join(format!("{file_name}-{nanos}.bak"));
     if local.exists() {
         std::fs::rename(local, &current_bak)?;
     }
@@ -517,12 +520,12 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
     if let Some(cur) = &current {
         let snap_dir = dirs.data.join("snapshots").join(slugify(&inst.name));
         if std::fs::create_dir_all(&snap_dir).is_ok() {
-            let secs = std::time::SystemTime::now()
+            let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
+                .map(|d| d.as_nanos())
                 .unwrap_or(0);
             let bak = snap_dir.join(format!(
-                "{}-{secs}.bak",
+                "{}-{nanos}.bak",
                 std::path::Path::new(cur)
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -536,7 +539,7 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
     // and all), then restore tracking state.
     let opts = InstallOptions { keep_source: true, ..Default::default() };
     match install(&downloaded, &opts) {
-        Ok(_) => {
+        Ok(out) => {
             let ledger = match Ledger::open() {
                 Ok(l) => l,
                 Err(e) => {
@@ -546,8 +549,24 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
                     }
                 }
             };
-            ledger.set_github_repo(&slugify(&name), Some(repo)).ok();
-            ledger.set_version(&slugify(&name), &release.tag).ok();
+            // The new AppImage may detect under a different name than the
+            // entry we updated from. Keep the user's original name: drop the
+            // stale entry and rename the new one, so no duplicate appears.
+            // The old .desktop/icon files are removed (the AppImage itself
+            // was already snapshotted above).
+            let orig_slug = slugify(&name);
+            if out.name != inst.name {
+                for f in &inst.files {
+                    if f.to_lowercase().ends_with(".appimage") {
+                        continue;
+                    }
+                    std::fs::remove_file(f).ok();
+                }
+                ledger.forget(&inst.name).ok();
+                ledger.rename(&out.name, &inst.name).ok();
+            }
+            ledger.set_github_repo(&orig_slug, Some(repo)).ok();
+            ledger.set_version(&orig_slug, &release.tag).ok();
             std::fs::remove_dir_all(&tmpdir).ok();
             UpdateReport {
                 name,
