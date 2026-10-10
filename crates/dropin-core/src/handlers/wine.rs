@@ -294,8 +294,7 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
     let desktop_path = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
     let desktop_text = match runner {
         super::proton::Runner::Wine => {
-            let wine = super::wine_setup::wine_binary()
-                .unwrap_or_else(|| PathBuf::from("wine"));
+            let wine = super::wine_setup::wine_binary().unwrap_or_else(|| PathBuf::from("wine"));
             format!(
                 "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
                 inst.name,
@@ -325,9 +324,7 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
     std::fs::write(&desktop_path, desktop_text)?;
 
     // Record the runner choice so it survives.
-    let mut env_map = ledger
-        .env_vars(slug)
-        .unwrap_or_default();
+    let mut env_map = ledger.env_vars(slug).unwrap_or_default();
     env_map.insert(
         "__dropin_runner".into(),
         match runner {
@@ -338,11 +335,7 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
     let json = serde_json::to_string(&env_map).unwrap_or_default();
     ledger.set_env_vars(slug, &json)?;
 
-    Ok(format!(
-        "Switched '{}' to {}.",
-        inst.name,
-        runner.label()
-    ))
+    Ok(format!("Switched '{}' to {}.", inst.name, runner.label()))
 }
 
 /// Get the current runner for an app, if it's a Windows app.

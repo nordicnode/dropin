@@ -200,6 +200,47 @@ pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
     );
 }
 
+/// Find the installed icon for an app by slug.
+/// Icons are saved as ~/.local/share/icons/hicolor/256x256/apps/dropin-{slug}.{ext}.
+pub fn find_app_icon(slug: &str) -> Option<std::path::PathBuf> {
+    let icons_dir = dropin_core::home_dir().join(".local/share/icons/hicolor/256x256/apps");
+    // Try common extensions.
+    for ext in ["png", "svg", "xpm", "ico"] {
+        let p = icons_dir.join(format!("dropin-{slug}.{ext}"));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    // Fallback: any file starting with dropin-{slug}.
+    if let Ok(entries) = std::fs::read_dir(&icons_dir) {
+        for e in entries.filter_map(|e| e.ok()) {
+            if let Some(name) = e.file_name().to_str() {
+                if name.starts_with(&format!("dropin-{slug}.")) {
+                    return Some(e.path());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// App icon: shows the real icon if available, falls back to letter badge.
+pub fn app_icon(ui: &mut egui::Ui, slug: &str, name: &str, size: f32) {
+    if let Some(path) = find_app_icon(slug) {
+        let uri = format!("file://{}", path.display());
+        // Rounded image; if it fails to load egui shows a placeholder,
+        // which is still better than nothing. The badge fallback happens
+        // when no icon file exists at all.
+        ui.add(
+            egui::Image::new(uri)
+                .fit_to_exact_size(egui::vec2(size, size))
+                .corner_radius(size * 0.22),
+        );
+    } else {
+        app_badge(ui, name, size);
+    }
+}
+
 /// A card frame for app rows and sections.
 pub fn card_frame() -> egui::Frame {
     egui::Frame::NONE

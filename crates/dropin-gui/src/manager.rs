@@ -127,9 +127,7 @@ fn load_apps() -> Vec<AppRow> {
                     })
                     .map(|m| m.into_iter().collect())
                     .unwrap_or_default(),
-                has_update: AVAILABLE_UPDATES.with(|cell| {
-                    cell.borrow().contains(&inst.name)
-                }),
+                has_update: AVAILABLE_UPDATES.with(|cell| cell.borrow().contains(&inst.name)),
             });
         }
     }
@@ -628,11 +626,7 @@ impl eframe::App for ManagerApp {
                         .collect();
                     formats.sort();
                     egui::ComboBox::from_id_salt("format_filter")
-                        .selected_text(
-                            self.format_filter
-                                .as_deref()
-                                .unwrap_or("All formats"),
-                        )
+                        .selected_text(self.format_filter.as_deref().unwrap_or("All formats"))
                         .width(130.0)
                         .show_ui(ui, |ui| {
                             if ui
@@ -643,11 +637,7 @@ impl eframe::App for ManagerApp {
                             }
                             for f in &formats {
                                 if ui
-                                    .selectable_value(
-                                        &mut self.format_filter,
-                                        Some(f.clone()),
-                                        f,
-                                    )
+                                    .selectable_value(&mut self.format_filter, Some(f.clone()), f)
                                     .clicked()
                                 {
                                     self.selected.clear();
@@ -666,11 +656,7 @@ impl eframe::App for ManagerApp {
                         });
                     // Select mode toggle.
                     ui.add_space(8.0);
-                    if ui
-                        .checkbox(&mut self.select_mode, "Select")
-                        .changed()
-                        && !self.select_mode
-                    {
+                    if ui.checkbox(&mut self.select_mode, "Select").changed() && !self.select_mode {
                         self.selected.clear();
                     }
                 });
@@ -736,7 +722,7 @@ impl ManagerApp {
 
         style::card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
-                style::app_badge(ui, &app.name, 48.0);
+                style::app_icon(ui, &app.name, &app.name, 48.0);
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
@@ -826,9 +812,7 @@ impl ManagerApp {
                         }
                         ui.separator();
                         if ui
-                            .button(
-                                egui::RichText::new("Remove…").color(style::color::BAD),
-                            )
+                            .button(egui::RichText::new("Remove…").color(style::color::BAD))
                             .clicked()
                             && !busy
                         {
@@ -1302,7 +1286,7 @@ impl ManagerApp {
                     .resizable(false)
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
-                            style::app_badge(ui, &app.name, 56.0);
+                            style::app_icon(ui, &app.name, &app.name, 56.0);
                             ui.add_space(8.0);
                             ui.vertical(|ui| {
                                 ui.label(egui::RichText::new(&app.name).size(20.0).strong());
