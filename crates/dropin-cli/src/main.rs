@@ -76,6 +76,8 @@ enum Cmd {
     /// Set up Wine automatically for Windows apps (tries system package
     /// manager first, falls back to portable Wine).
     SetupWine,
+    /// Set up Proton (GE-Proton via umu-launcher) automatically for games.
+    SetupProton,
     /// Register dropin with the desktop: double-click handling plus
     /// “Install as application” in Dolphin, Nemo, Nautilus, and Thunar.
     Integrate,
@@ -180,6 +182,7 @@ fn run() -> dropin_core::Result<()> {
                 system,
                 allow_net,
                 quiet: false,
+                runner: None,
             };
             // Show the plan first unless --yes.
             if !yes {
@@ -281,6 +284,17 @@ fn run() -> dropin_core::Result<()> {
             match dropin_core::handlers::wine_setup::auto_setup(&|msg| println!("  {msg}")) {
                 Ok(path) => {
                     println!("\nWine is ready: {}", path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Cmd::SetupProton => {
+            println!("Setting up Proton for games…");
+            match dropin_core::handlers::proton::setup_proton(&|msg| println!("  {msg}")) {
+                Ok(path) => {
+                    println!("\nProton support is ready: {}", path.display());
+                    println!("GE-Proton will download automatically on first game launch.");
                     Ok(())
                 }
                 Err(e) => Err(e),

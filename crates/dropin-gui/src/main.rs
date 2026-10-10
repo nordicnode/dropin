@@ -84,6 +84,7 @@ struct InstallResult {
 struct ReviewState {
     detection: Detection,
     plan: InstallPlan,
+    file: std::path::PathBuf,
     size: u64,
     sha: String,
     verified: dropin_core::verify::Verification,
@@ -93,6 +94,10 @@ struct ReviewState {
     allow_net: bool,
     /// Set when the user starts automated Wine setup.
     wine_setup: Option<WineSetupState>,
+    /// For Windows apps: is this a game? None = auto-detect.
+    is_game: Option<bool>,
+    /// Set when the user starts automated Proton setup.
+    proton_setup: Option<WineSetupState>,
 }
 
 struct WineSetupState {
@@ -153,6 +158,7 @@ impl DropinApp {
                     Phase::Review(ReviewState {
                         detection,
                         plan,
+                        file: file.clone(),
                         size,
                         sha,
                         verified,
@@ -160,6 +166,8 @@ impl DropinApp {
                         findings,
                         allow_net: false,
                         wine_setup: None,
+                        is_game: None,
+                        proton_setup: None,
                     })
                 }
             },
@@ -174,6 +182,20 @@ impl DropinApp {
     fn start_install(&mut self) {
         let file = self.file.clone();
         let allow_net = self.allow_net;
+        // Capture the runner choice from the review state.
+        let runner = match &self.phase {
+            Phase::Review(st) if st.detection.format == dropin_core::detect::Format::WindowsExe => {
+                let is_game = st.is_game.unwrap_or_else(|| {
+                    dropin_core::handlers::proton::likely_game(&st.detection.name_hint, &st.file)
+                });
+                Some(if is_game {
+                    dropin_core::handlers::proton::Runner::Proton
+                } else {
+                    dropin_core::handlers::proton::Runner::Wine
+                })
+            }
+            _ => None,
+        };
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let res = install::install(
@@ -184,6 +206,7 @@ impl DropinApp {
                     system: false,
                     allow_net,
                     quiet: true,
+                    runner,
                 },
             );
             let _ = tx.send(match res {
@@ -354,10 +377,50 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             style::dim_label(ui, step);
         });
     }
-    // Wine setup for Windows apps.
+    // Runner setup for Windows apps: Wine for apps, GE-Proton for games.
     let is_windows = st.detection.format == dropin_core::detect::Format::WindowsExe;
-    let wine_missing = is_windows && !dropin_core::handlers::wine::have_wine();
-    // Poll an in-progress setup.
+    // Determine if this is a game (user choice overrides heuristic).
+    let is_game = if is_windows {
+        match st.is_game {
+            Some(v) => v,
+            None => dropin_core::handlers::proton::likely_game(&st.detection.name_hint, &st.file),
+        }
+    } else {
+        false
+    };
+    let wine_missing = is_windows && !is_game && !dropin_core::handlers::wine::have_wine();
+    let proton_missing = is_windows && is_game && !dropin_core::handlers::proton::have_umu();
+
+    // Game/app selector for Windows exes.
+    if is_windows {
+        ui.add_space(8.0);
+        style::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                style::dim_label(ui, "What is this?");
+                ui.add_space(8.0);
+                let mut game = is_game;
+                if ui.radio(!game, "Application").clicked() {
+                    game = false;
+                }
+                if ui.radio(game, "Game").clicked() {
+                    game = true;
+                }
+                if Some(game) != st.is_game {
+                    st.is_game = Some(game);
+                }
+            });
+            if is_game {
+                style::faint_label(
+                    ui,
+                    "Games run with GE-Proton: best compatibility, automatic per-game fixes.",
+                );
+            } else {
+                style::faint_label(ui, "Applications run with Wine: lighter and faster.");
+            }
+        });
+    }
+
+    // Poll in-progress setups.
     if let Some(ws) = &mut st.wine_setup {
         if let Ok(res) = ws.rx.try_recv() {
             if res.ok {
@@ -365,10 +428,21 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             } else {
                 ws.status = format!("Setup failed: {}", res.message);
                 st.wine_setup = None;
-                // Keep the error visible via a new setup state in error.
             }
         }
     }
+    if let Some(ws) = &mut st.proton_setup {
+        if let Ok(res) = ws.rx.try_recv() {
+            if res.ok {
+                st.proton_setup = None;
+            } else {
+                ws.status = format!("Setup failed: {}", res.message);
+                st.proton_setup = None;
+            }
+        }
+    }
+
+    // Wine setup UI.
     if wine_missing && st.wine_setup.is_none() {
         ui.add_space(8.0);
         style::card_frame().show(ui, |ui| {
@@ -412,7 +486,60 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             style::dim_label(ui, &ws.status);
             style::faint_label(ui, "This may take a few minutes on first run.");
         });
-        // Keep repainting while setup runs.
+        ui.ctx().request_repaint();
+    }
+
+    // Proton setup UI.
+    if proton_missing && st.proton_setup.is_none() {
+        ui.add_space(8.0);
+        style::card_frame().show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("Proton isn't set up yet")
+                    .strong()
+                    .size(15.0),
+            );
+            ui.add_space(4.0);
+            style::dim_label(
+                ui,
+                "Games run best with GE-Proton. dropin will install umu-launcher \
+                 (the Proton runtime manager), then download GE-Proton and the \
+                 Steam Runtime automatically. Per-game fixes apply on their own.",
+            );
+            ui.add_space(8.0);
+            if style::primary_button(ui, "Set up Proton automatically").clicked() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let result = dropin_core::handlers::proton::setup_proton(&|_| {});
+                    let _ = tx.send(WineSetupResult {
+                        ok: result.is_ok(),
+                        message: result.err().map(|e| e.to_string()).unwrap_or_default(),
+                    });
+                });
+                st.proton_setup = Some(WineSetupState {
+                    rx,
+                    status: "Starting…".into(),
+                });
+            }
+        });
+    } else if let Some(ws) = &st.proton_setup {
+        ui.add_space(8.0);
+        style::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Setting up Proton…")
+                        .strong()
+                        .size(15.0),
+                );
+            });
+            ui.add_space(4.0);
+            style::dim_label(ui, &ws.status);
+            style::faint_label(
+                ui,
+                "First game launch downloads GE-Proton (~500MB, cached).",
+            );
+        });
         ui.ctx().request_repaint();
     }
     if st.plan.needs_root {
@@ -483,8 +610,9 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             st.verified,
             dropin_core::verify::Verification::Mismatch { .. }
         );
-        let wine_blocked = wine_missing || st.wine_setup.is_some();
-        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !wine_blocked;
+        let runner_blocked =
+            wine_missing || proton_missing || st.wine_setup.is_some() || st.proton_setup.is_some();
+        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !runner_blocked;
         let clicked = style::primary_button_enabled(ui, can_install, "Install").clicked();
         if style::ghost_button(ui, "Cancel").clicked() {
             std::process::exit(0);

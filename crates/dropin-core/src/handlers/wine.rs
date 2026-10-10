@@ -76,39 +76,68 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
     })
 }
 
-/// Install a .exe/.msi: create prefix, copy installer in, run it under Wine.
-pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
-    if !have_wine() {
-        return Err(Error::Refused(
-            "Wine isn't installed, so Windows apps can't run yet.\n\
-             Install Wine for your distro (e.g. `apt install wine`, `dnf install wine`,\n\
-             `pacman -S wine`) and try again."
-                .into(),
-        ));
+/// Decide which runner to use: explicit choice, or auto-detect.
+pub fn pick_runner(src: &Path, name: &str, opts: &InstallOptions) -> super::proton::Runner {
+    if let Some(r) = opts.runner {
+        return r;
     }
+    if super::proton::likely_game(name, src) {
+        super::proton::Runner::Proton
+    } else {
+        super::proton::Runner::Wine
+    }
+}
+
+/// Install a .exe/.msi: create prefix, copy installer in, run it.
+/// Uses GE-Proton (via umu) for games, plain Wine for applications.
+pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let d = crate::detect::detect(src)?;
+    let runner = pick_runner(src, &d.name_hint, opts);
+
+    // Check the runner is available.
+    match runner {
+        super::proton::Runner::Wine => {
+            if !have_wine() {
+                return Err(Error::Refused(
+                    "Wine isn't installed, so Windows apps can't run yet.\n\
+                     Run `dropin setup-wine` or use the GUI to set it up automatically."
+                        .into(),
+                ));
+            }
+        }
+        super::proton::Runner::Proton => {
+            if !super::proton::have_umu() {
+                return Err(Error::Refused(
+                    "Proton support isn't set up yet.\n\
+                     Run `dropin setup-proton` or use the GUI to set it up automatically."
+                        .into(),
+                ));
+            }
+        }
+    }
+
     let slug = slugify(&d.name_hint);
     let dirs = UserDirs::new();
     dirs.ensure()?;
 
     let prefix = prefix_for(&slug);
-    if prefix.exists() && !opts.yes {
-        // Prefix exists from a previous install; reuse it.
-    } else if !prefix.exists() {
+    if !prefix.exists() {
         std::fs::create_dir_all(&prefix)?;
-        // Initialize the prefix (creates the virtual C: drive).
-        let status = std::process::Command::new(wine_bin())
-            .env("WINEPREFIX", &prefix)
-            .arg("wineboot")
-            .arg("--init")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| Error::Command(format!("couldn't initialize Wine prefix: {e}")))?;
-        if !status.success() {
-            let _ = std::fs::remove_dir_all(&prefix);
-            return Err(Error::Command("Wine prefix initialization failed".into()));
+        // Initialize the prefix for Wine; umu/Proton creates it on demand.
+        if runner == super::proton::Runner::Wine {
+            let status = std::process::Command::new(wine_bin())
+                .env("WINEPREFIX", &prefix)
+                .arg("wineboot")
+                .arg("--init")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|e| Error::Command(format!("couldn't initialize Wine prefix: {e}")))?;
+            if !status.success() {
+                let _ = std::fs::remove_dir_all(&prefix);
+                return Err(Error::Command("Wine prefix initialization failed".into()));
+            }
         }
     }
 
@@ -117,6 +146,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         .file_name()
         .ok_or_else(|| Error::Unsupported("bad file name".into()))?;
     let dest = prefix.join("drive_c").join(file_name);
+    std::fs::create_dir_all(prefix.join("drive_c"))?;
     std::fs::copy(src, &dest)?;
 
     // For .msi, run msiexec; for .exe, run directly.
@@ -131,9 +161,10 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // unless --yes.
     if !opts.yes {
         eprintln!(
-            "About to run the Windows installer under Wine.\n\
+            "About to run the Windows installer with {}.\n\
              Prefix: {}\n\
              This runs the vendor's code — only continue if you trust it.",
+            runner.label(),
             prefix.display()
         );
         if !crate::handlers::script::ask("Run the installer? [y/N]")? {
@@ -141,36 +172,72 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         }
     }
 
-    let mut cmd = std::process::Command::new(wine_bin());
-    cmd.env("WINEPREFIX", &prefix);
-    if is_msi {
-        cmd.arg("msiexec").arg("/i").arg(&dest);
-    } else {
-        cmd.arg(&dest);
-    }
-    let status = cmd
-        .status()
-        .map_err(|e| Error::Command(format!("Wine failed: {e}")))?;
-    if !status.success() {
-        // Don't fail the whole install: the user may have cancelled the
-        // installer, or it may have installed despite a nonzero exit.
-        eprintln!("note: the installer exited with a non-zero status; continuing anyway");
+    match runner {
+        super::proton::Runner::Wine => {
+            let mut cmd = std::process::Command::new(wine_bin());
+            cmd.env("WINEPREFIX", &prefix);
+            if is_msi {
+                cmd.arg("msiexec").arg("/i").arg(&dest);
+            } else {
+                cmd.arg(&dest);
+            }
+            let status = cmd
+                .status()
+                .map_err(|e| Error::Command(format!("Wine failed: {e}")))?;
+            if !status.success() {
+                eprintln!("note: the installer exited with a non-zero status; continuing anyway");
+            }
+        }
+        super::proton::Runner::Proton => {
+            // protonfixes applies automatically via GAMEID.
+            // For .msi, Proton handles it via the exe path.
+            if let Err(e) = super::proton::run_with_proton(
+                &prefix,
+                &dest,
+                &d.name_hint,
+                &std::collections::HashMap::new(),
+            ) {
+                eprintln!("note: {e}; continuing anyway");
+            }
+        }
     }
 
     // Find the installed .exe: look for new .exes in drive_c, prefer
     // Program Files.
     let exe = find_installed_exe(&prefix).unwrap_or(dest.clone());
 
-    // Menu entry that launches via Wine with this prefix.
+    // Menu entry that launches with the right runner.
     let desktop_path = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
-    let desktop_text = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
-        d.name_hint,
-        prefix.display(),
-        wine_bin().display(),
-        exe.display()
-    );
+    let desktop_text = match runner {
+        super::proton::Runner::Wine => format!(
+            "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
+            d.name_hint,
+            prefix.display(),
+            wine_bin().display(),
+            exe.display()
+        ),
+        super::proton::Runner::Proton => {
+            let (env, argv) = super::proton::proton_launch_cmd(&prefix, &exe, &d.name_hint);
+            let env_str = env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let argv_str = argv
+                .iter()
+                .map(|a| format!("\"{a}\""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "[Desktop Entry]\nType=Application\nName={}\nExec=env {env_str} {argv_str}\nCategories=Game;\nTerminal=false\n",
+                d.name_hint,
+            )
+        }
+    };
     std::fs::write(&desktop_path, desktop_text)?;
+
+    // Record the runner in the ledger via env_vars (so launch uses it).
+    // The launch function will check for a saved runner preference.
 
     Ok(InstallOutcome {
         name: slug.clone(),

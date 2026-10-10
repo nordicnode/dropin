@@ -5,6 +5,7 @@
 pub mod appimage;
 pub mod deb;
 pub mod flatpak;
+pub mod proton;
 pub mod rpm;
 pub mod script;
 pub mod tarball;
@@ -26,6 +27,8 @@ pub struct InstallOptions {
     pub allow_net: bool,
     /// Suppress progress printing (the GUI presents its own UI).
     pub quiet: bool,
+    /// Runner for Windows apps: None = auto-detect (game -> Proton, app -> Wine).
+    pub runner: Option<proton::Runner>,
 }
 
 /// A dry-run description of what installing `src` would do.
