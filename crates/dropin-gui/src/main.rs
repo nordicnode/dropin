@@ -51,8 +51,8 @@ fn main() {
     let file = file.unwrap();
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 640.0])
-            .with_resizable(false),
+            .with_inner_size([520.0, 720.0])
+            .with_min_inner_size([480.0, 600.0]),
         ..Default::default()
     };
     let mut app = DropinApp::new(file);
@@ -328,19 +328,21 @@ impl eframe::App for DropinApp {
 /// Returns true when the user clicked Install.
 fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) -> bool {
     // Scrollable content with fixed buttons at the bottom.
-    // (Panels can't nest, so we manually reserve space for the button bar.)
-    let button_bar_height = 64.0;
-    let scroll_height = (ui.available_height() - button_bar_height).max(100.0);
+    // Reserve generous space for the button bar to avoid cutoff.
+    let button_bar_height = 80.0;
+    let scroll_height = (ui.available_height() - button_bar_height).max(200.0);
 
     egui::ScrollArea::vertical()
         .max_height(scroll_height)
         .show(ui, |ui| {
             ui_review_content(ui, file, st);
+            // Bottom padding inside scroll area so content doesn't touch buttons.
+            ui.add_space(8.0);
         });
 
-    ui.add_space(12.0);
+    // Fixed button bar.
     ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(12.0);
     let mut clicked_install = false;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let checksum_ok = !matches!(
@@ -364,6 +366,7 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             std::process::exit(0);
         }
     });
+    ui.add_space(12.0);
     clicked_install
 }
 
@@ -675,23 +678,24 @@ enum DoneAction {
 fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
     let mut action = DoneAction::None;
     // Scrollable content with fixed Close button at the bottom.
-    let button_bar_height = 64.0;
-    let scroll_height = (ui.available_height() - button_bar_height).max(100.0);
+    let button_bar_height = 80.0;
+    let scroll_height = (ui.available_height() - button_bar_height).max(200.0);
 
     egui::ScrollArea::vertical()
         .max_height(scroll_height)
         .show(ui, |ui| {
             ui_done_content(ui, res, &mut action);
+            ui.add_space(8.0);
         });
 
-    ui.add_space(12.0);
     ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(12.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if style::primary_button(ui, "Close").clicked() {
             action = DoneAction::Close;
         }
     });
+    ui.add_space(12.0);
     action
 }
 
