@@ -173,7 +173,7 @@ pub fn primary_button_enabled(ui: &mut egui::Ui, enabled: bool, label: &str) -> 
         .stroke(if enabled {
             egui::Stroke::NONE
         } else {
-            egui::Stroke::new(1.0, color::BORDER)
+            egui::Stroke::new(1.0_f32, color::BORDER)
         })
         .corner_radius(10.0)
         .min_size(egui::vec2(120.0, 40.0)),
@@ -185,7 +185,7 @@ pub fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).size(14.0).color(color::TEXT))
             .fill(color::CARD)
-            .stroke(egui::Stroke::new(1.0, color::BORDER_STRONG))
+            .stroke(egui::Stroke::new(1.0_f32, color::BORDER_STRONG))
             .corner_radius(10.0)
             .min_size(egui::vec2(100.0, 40.0)),
     )
@@ -216,7 +216,7 @@ pub fn tools_menu_button<R>(
 pub fn search_field(ui: &mut egui::Ui, text: &mut String, id: egui::Id) -> egui::Response {
     egui::Frame::NONE
         .fill(color::CARD)
-        .stroke(egui::Stroke::new(1.0, color::BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, color::BORDER))
         .corner_radius(10.0)
         .inner_margin(egui::Margin {
             left: 14,
@@ -267,7 +267,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tint: egui::Color32) {
     egui::Frame::NONE
         .fill(bg)
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             egui::Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), 80),
         ))
         .corner_radius(20.0)
@@ -331,7 +331,7 @@ pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
     ui.painter().rect_stroke(
         rect,
         radius,
-        egui::Stroke::new(1.0, color::BORDER_STRONG),
+        egui::Stroke::new(1.0_f32, color::BORDER_STRONG),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
