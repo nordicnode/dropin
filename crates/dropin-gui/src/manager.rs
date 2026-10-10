@@ -16,6 +16,8 @@ use std::thread;
 thread_local! {
     /// Apps with available updates, set by the background check.
     static AVAILABLE_UPDATES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Apps updated in the last check, for the "updated" badge.
+    static RECENTLY_UPDATED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// One row in the app list.
@@ -40,6 +42,10 @@ struct AppRow {
     env_vars: Vec<(String, String)>,
     /// True when an update is available (from background check).
     has_update: bool,
+    /// True when the app was updated in the last check.
+    recently_updated: bool,
+    /// App category (Games, Media, Utilities, etc.).
+    category: String,
 }
 
 /// Recursively sum file sizes under a path (cap at 100k entries).
@@ -82,6 +88,86 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// Check if dropin is set to launch at startup.
+fn is_autostart_enabled() -> bool {
+    dropin_core::home_dir()
+        .join(".config/autostart/dropin.desktop")
+        .exists()
+}
+
+/// Get the category for an app from its .desktop file.
+/// Returns a simplified category: Game, Utility, Media, etc.
+fn app_category(slug: &str, format: &str) -> String {
+    // Wine/Proton games.
+    if format.contains("Windows") {
+        // Check if it's a game via the desktop file.
+        let desktop_path = dropin_core::home_dir()
+            .join(".local/share/applications")
+            .join(format!("dropin-{slug}.desktop"));
+        if let Ok(text) = std::fs::read_to_string(&desktop_path) {
+            if text.contains("Categories=Game") {
+                return "Games".to_string();
+            }
+        }
+        return "Windows Apps".to_string();
+    }
+    // Parse .desktop Categories.
+    let desktop_path = dropin_core::home_dir()
+        .join(".local/share/applications")
+        .join(format!("dropin-{slug}.desktop"));
+    if let Ok(text) = std::fs::read_to_string(&desktop_path) {
+        for line in text.lines() {
+            if let Some(cats) = line.strip_prefix("Categories=") {
+                let cats = cats.to_lowercase();
+                if cats.contains("game") {
+                    return "Games".to_string();
+                }
+                if cats.contains("audio") || cats.contains("video") || cats.contains("media") {
+                    return "Media".to_string();
+                }
+                if cats.contains("development") || cats.contains("programming") {
+                    return "Development".to_string();
+                }
+                if cats.contains("graphics") || cats.contains("photography") {
+                    return "Graphics".to_string();
+                }
+                if cats.contains("network") || cats.contains("webbrowser") {
+                    return "Internet".to_string();
+                }
+                if cats.contains("office") || cats.contains("productivity") {
+                    return "Productivity".to_string();
+                }
+                if cats.contains("utility") || cats.contains("system") {
+                    return "Utilities".to_string();
+                }
+            }
+        }
+    }
+    // Fallback by format.
+    match format {
+        f if f.contains("AppImage") => "Applications".to_string(),
+        f if f.contains("Flatpak") => "Applications".to_string(),
+        _ => "Other".to_string(),
+    }
+}
+
+/// Enable or disable launch at startup.
+fn set_autostart(enabled: bool) {
+    let path = dropin_core::home_dir().join(".config/autostart/dropin.desktop");
+    if enabled {
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            let content = format!(
+                "[Desktop Entry]\nType=Application\nName=dropin\nExec={}\nHidden=false\nX-GNOME-Autostart-enabled=true\n",
+                exe.display()
+            );
+            let _ = std::fs::write(&path, content);
+        }
+    } else {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 fn load_apps() -> Vec<AppRow> {
     let mut rows = Vec::new();
     if let Ok(list) = install::list() {
@@ -109,7 +195,7 @@ fn load_apps() -> Vec<AppRow> {
             };
             rows.push(AppRow {
                 name: inst.name.clone(),
-                format: inst.format,
+                format: inst.format.clone(),
                 version: inst.version,
                 verified: inst.verified,
                 github_repo: inst.github_repo,
@@ -128,6 +214,8 @@ fn load_apps() -> Vec<AppRow> {
                     .map(|m| m.into_iter().collect())
                     .unwrap_or_default(),
                 has_update: AVAILABLE_UPDATES.with(|cell| cell.borrow().contains(&inst.name)),
+                recently_updated: RECENTLY_UPDATED.with(|cell| cell.borrow().contains(&inst.name)),
+                category: app_category(&inst.name, &inst.format),
             });
         }
     }
@@ -172,6 +260,7 @@ pub struct ManagerApp {
     search: String,
     sort_by: SortBy,
     format_filter: Option<String>,
+    category_filter: Option<String>,
     // bulk selection
     selected: std::collections::BTreeSet<String>,
     select_mode: bool,
@@ -221,6 +310,7 @@ impl ManagerApp {
             search: String::new(),
             sort_by: SortBy::Name,
             format_filter: None,
+            category_filter: None,
             select_mode: false,
             details_name: None,
             selected: std::collections::BTreeSet::new(),
@@ -269,16 +359,27 @@ impl ManagerApp {
             AVAILABLE_UPDATES.with(|cell| {
                 *cell.borrow_mut() = available;
             });
-            let (message, updates) = match install::update(None, true) {
+            let (message, updated_names) = match install::update(None, true) {
                 Ok(reports) => {
-                    let n = reports
+                    let names: Vec<String> = reports
                         .iter()
                         .filter(|r| matches!(r.status, install::UpdateStatus::Updated(_)))
-                        .count();
-                    (fmt_reports(reports), n)
+                        .map(|r| r.name.clone())
+                        .collect();
+                    (fmt_reports(reports), names)
                 }
-                Err(e) => (format!("Update check failed: {e}"), 0),
+                Err(e) => (format!("Update check failed: {e}"), Vec::new()),
             };
+            let updates = updated_names.len();
+            // Mark recently updated for badge display.
+            RECENTLY_UPDATED.with(|cell| {
+                *cell.borrow_mut() = updated_names;
+            });
+            // Clear the "available" badge for apps that were just updated.
+            AVAILABLE_UPDATES.with(|cell| {
+                let updated = RECENTLY_UPDATED.with(|c| c.borrow().clone());
+                cell.borrow_mut().retain(|n| !updated.contains(n));
+            });
             if updates > 0 {
                 let _ = notify_rust::Notification::new()
                     .summary("dropin")
@@ -402,11 +503,13 @@ impl eframe::App for ManagerApp {
                 ui.label(egui::RichText::new("dropin").size(20.0).strong());
                 ui.add_space(16.0);
                 if style::primary_button_enabled(ui, !busy, "Install app…").clicked() && !busy {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Choose a file to install")
-                        .pick_file()
+                    if let Some(paths) = rfd::FileDialog::new()
+                        .set_title("Choose files to install")
+                        .pick_files()
                     {
-                        self.spawn_installer(&path);
+                        for path in paths {
+                            self.spawn_installer(&path);
+                        }
                     }
                 }
                 if ui.button("Check for updates").clicked() && !busy {
@@ -577,7 +680,12 @@ impl eframe::App for ManagerApp {
                         .as_ref()
                         .map(|f| &a.format == f)
                         .unwrap_or(true);
-                    matches_query && matches_format
+                    let matches_category = self
+                        .category_filter
+                        .as_ref()
+                        .map(|c| &a.category == c)
+                        .unwrap_or(true);
+                    matches_query && matches_format && matches_category
                 })
                 .cloned()
                 .collect();
@@ -657,6 +765,47 @@ impl eframe::App for ManagerApp {
                             }
                         });
                     ui.add_space(8.0);
+                    // Category filter.
+                    let mut categories: Vec<String> = self
+                        .apps
+                        .iter()
+                        .map(|a| a.category.clone())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    categories.sort();
+                    if categories.len() > 1 {
+                        egui::ComboBox::from_id_salt("category_filter")
+                            .selected_text(
+                                self.category_filter.as_deref().unwrap_or("All categories"),
+                            )
+                            .width(130.0)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.category_filter,
+                                        None,
+                                        "All categories",
+                                    )
+                                    .clicked()
+                                {
+                                    self.selected.clear();
+                                }
+                                for c in &categories {
+                                    if ui
+                                        .selectable_value(
+                                            &mut self.category_filter,
+                                            Some(c.clone()),
+                                            c,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.selected.clear();
+                                    }
+                                }
+                            });
+                        ui.add_space(8.0);
+                    }
                     // Sort.
                     egui::ComboBox::from_id_salt("sort_by")
                         .selected_text(self.sort_by.label())
@@ -754,6 +903,9 @@ impl ManagerApp {
                         }
                         if app.has_update {
                             style::badge(ui, "update", style::color::WARN);
+                        }
+                        if app.recently_updated {
+                            style::badge(ui, "updated", style::color::GOOD);
                         }
                     });
                     if let Some(repo) = &app.github_repo {
@@ -1143,6 +1295,12 @@ impl ManagerApp {
                         .changed()
                     {
                         let _ = settings::save(&self.settings);
+                    }
+                    ui.add_space(8.0);
+                    // Launch at startup toggle.
+                    let mut autostart = is_autostart_enabled();
+                    if ui.checkbox(&mut autostart, "Open dropin when I log in").changed() {
+                        set_autostart(autostart);
                     }
                     ui.add_space(8.0);
                     ui.label(egui::RichText::new("dropin never phones home on its own —\nchecks only run when you open the manager.").weak());
