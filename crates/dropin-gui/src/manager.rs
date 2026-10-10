@@ -8,17 +8,9 @@
 use crate::style;
 use dropin_core::{health, install, integrate, settings};
 use eframe::egui;
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-
-thread_local! {
-    /// Apps with available updates, set by the background check.
-    static AVAILABLE_UPDATES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// Apps updated in the last check, for the "updated" badge.
-    static RECENTLY_UPDATED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
 
 /// One row in the app list.
 #[derive(Clone)]
@@ -168,7 +160,10 @@ fn set_autostart(enabled: bool) {
     }
 }
 
-fn load_apps() -> Vec<AppRow> {
+fn load_apps(
+    available: &std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    recent: &std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) -> Vec<AppRow> {
     let mut rows = Vec::new();
     if let Ok(list) = install::list() {
         for inst in list {
@@ -213,8 +208,14 @@ fn load_apps() -> Vec<AppRow> {
                     })
                     .map(|m| m.into_iter().collect())
                     .unwrap_or_default(),
-                has_update: AVAILABLE_UPDATES.with(|cell| cell.borrow().contains(&inst.name)),
-                recently_updated: RECENTLY_UPDATED.with(|cell| cell.borrow().contains(&inst.name)),
+                has_update: available
+                    .lock()
+                    .map(|v| v.contains(&inst.name))
+                    .unwrap_or(false),
+                recently_updated: recent
+                    .lock()
+                    .map(|v| v.contains(&inst.name))
+                    .unwrap_or(false),
                 category: app_category(&inst.name, &inst.format),
             });
         }
@@ -265,6 +266,10 @@ pub struct ManagerApp {
     selected: std::collections::BTreeSet<String>,
     select_mode: bool,
     details_name: Option<String>,
+    /// Apps with available updates (shared with background thread).
+    available_updates: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Apps updated in the last check (shared with background thread).
+    recently_updated: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -287,8 +292,10 @@ impl SortBy {
 
 impl ManagerApp {
     pub fn new() -> Self {
+        let available_updates = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recently_updated = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         Self {
-            apps: load_apps(),
+            apps: load_apps(&available_updates, &recently_updated),
             status: String::new(),
             busy: None,
             track_name: None,
@@ -313,6 +320,8 @@ impl ManagerApp {
             category_filter: None,
             select_mode: false,
             details_name: None,
+            available_updates,
+            recently_updated,
             selected: std::collections::BTreeSet::new(),
         }
     }
@@ -353,12 +362,14 @@ impl ManagerApp {
         if self.apps.is_empty() {
             return;
         }
-        self.run_op("Checking for updates", || {
+        let available_arc = self.available_updates.clone();
+        let recent_arc = self.recently_updated.clone();
+        self.run_op("Checking for updates", move || {
             // Check for available updates first (for badges).
             let available = install::check_for_updates().unwrap_or_default();
-            AVAILABLE_UPDATES.with(|cell| {
-                *cell.borrow_mut() = available;
-            });
+            if let Ok(mut v) = available_arc.lock() {
+                *v = available;
+            }
             let (message, updated_names) = match install::update(None, true) {
                 Ok(reports) => {
                     let names: Vec<String> = reports
@@ -372,14 +383,13 @@ impl ManagerApp {
             };
             let updates = updated_names.len();
             // Mark recently updated for badge display.
-            RECENTLY_UPDATED.with(|cell| {
-                *cell.borrow_mut() = updated_names;
-            });
+            if let Ok(mut v) = recent_arc.lock() {
+                *v = updated_names.clone();
+            }
             // Clear the "available" badge for apps that were just updated.
-            AVAILABLE_UPDATES.with(|cell| {
-                let updated = RECENTLY_UPDATED.with(|c| c.borrow().clone());
-                cell.borrow_mut().retain(|n| !updated.contains(n));
-            });
+            if let Ok(mut v) = available_arc.lock() {
+                v.retain(|n| !updated_names.contains(n));
+            }
             if updates > 0 {
                 let _ = notify_rust::Notification::new()
                     .summary("dropin")
@@ -411,7 +421,7 @@ impl ManagerApp {
     }
 
     fn refresh(&mut self) {
-        self.apps = load_apps();
+        self.apps = load_apps(&self.available_updates, &self.recently_updated);
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
