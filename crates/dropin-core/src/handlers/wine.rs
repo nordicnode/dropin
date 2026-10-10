@@ -30,44 +30,27 @@ fn wine_bin() -> PathBuf {
     super::wine_setup::wine_binary().unwrap_or_else(|| PathBuf::from("wine"))
 }
 
-/// Distro-specific instructions for installing Wine, for the GUI's guided setup.
-pub fn install_instructions() -> String {
-    // Detect distro from /etc/os-release.
-    let id = std::fs::read_to_string("/etc/os-release")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("ID="))
-                .map(|l| l.trim_start_matches("ID=").trim_matches('"').to_lowercase())
-        })
-        .unwrap_or_default();
-    let cmd = match id.as_str() {
-        "ubuntu" | "debian" | "linuxmint" | "pop" | "zorin" => {
-            "sudo apt update && sudo apt install wine"
-        }
-        "fedora" => "sudo dnf install wine",
-        "arch" | "manjaro" | "endeavouros" => "sudo pacman -S wine",
-        "opensuse" | "opensuse-tumbleweed" | "opensuse-leap" => "sudo zypper install wine",
-        _ => "Install the 'wine' package with your distro's package manager",
-    };
-    format!("Wine isn't installed yet. To run Windows apps, install Wine first:\n\n{cmd}\n\nThen come back and drop in your .exe again.")
-}
-
 pub fn plan(src: &Path) -> Result<InstallPlan> {
     let d = crate::detect::detect(src)?;
-    let wine_ok = have_wine();
+    // For planning, use the heuristic (the GUI lets the user override).
+    let is_game = super::proton::likely_game(&d.name_hint, src);
+    let (runner_label, ready) = if is_game {
+        ("GE-Proton", super::proton::have_umu())
+    } else {
+        ("Wine", have_wine())
+    };
     Ok(InstallPlan {
         app_name: d.name_hint.clone(),
         version: None,
-        steps: if wine_ok {
+        steps: if ready {
             vec![
-                "Create an isolated Wine prefix just for this app".into(),
-                "Copy the installer into the prefix and run it".into(),
-                "Add a menu entry that launches it with Wine".into(),
+                "Create an isolated prefix just for this app".into(),
+                format!("Copy the installer into the prefix and run it with {runner_label}"),
+                format!("Add a menu entry that launches it with {runner_label}"),
             ]
         } else {
             vec![
-                "Wine isn't installed yet — dropin will guide you through it".into(),
+                format!("{runner_label} isn't set up yet — dropin will set it up automatically"),
                 "Then create an isolated prefix and run the installer".into(),
             ]
         },

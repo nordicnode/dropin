@@ -341,18 +341,54 @@ fn run() -> dropin_core::Result<()> {
             let json = std::fs::read_to_string(&file)?;
             let apps: Vec<dropin_core::ledger::Install> = serde_json::from_str(&json)
                 .map_err(|e| dropin_core::Error::Unsupported(format!("couldn't import: {e}")))?;
-            println!(
-                "Found {} apps in {}. Reinstall them from their original files to restore.",
-                apps.len(),
-                file.display()
-            );
+            println!("Found {} apps in {}.", apps.len(), file.display());
+            let mut restored = 0;
+            let mut skipped = Vec::new();
             for app in &apps {
-                println!(
-                    "  {} {} ({})",
-                    app.name,
-                    app.version.as_deref().unwrap_or(""),
-                    app.format
-                );
+                let src = std::path::Path::new(&app.source_path);
+                if src.exists() {
+                    println!("  Restoring {} from {}…", app.name, src.display());
+                    let opts = InstallOptions {
+                        yes: true,
+                        keep_source: false,
+                        system: false,
+                        allow_net: false,
+                        quiet: false,
+                        runner: None,
+                    };
+                    match install::install(src, &opts) {
+                        Ok(_) => {
+                            // Restore env vars if they were exported.
+                            if let Some(env_json) = &app.env_vars {
+                                if let Ok(map) = serde_json::from_str::<
+                                    std::collections::BTreeMap<String, String>,
+                                >(env_json)
+                                {
+                                    if let Ok(ledger) = dropin_core::ledger::Ledger::open() {
+                                        let _ = ledger.set_env_vars(
+                                            &dropin_core::slugify(&app.name),
+                                            &serde_json::to_string(&map).unwrap_or_default(),
+                                        );
+                                    }
+                                }
+                            }
+                            restored += 1;
+                        }
+                        Err(e) => skipped.push(format!("{}: {e}", app.name)),
+                    }
+                } else {
+                    skipped.push(format!(
+                        "{}: source file not found ({})",
+                        app.name, app.source_path
+                    ));
+                }
+            }
+            println!("\nRestored {restored} apps.");
+            if !skipped.is_empty() {
+                println!("Skipped:");
+                for s in &skipped {
+                    println!("  {s}");
+                }
             }
             Ok(())
         }
