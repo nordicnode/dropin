@@ -37,10 +37,24 @@ $ # remember all of this when you want it gone
 
 **With dropin:** you double-click the file. A dialog shows you exactly what it will do. You click Install. It's in your menu. `dropin remove coolapp` undoes every bit of it later.
 
-## See it
+## See it in action
+
+Double-click a real AppImage — dropin shows exactly what it will do, including the integrity check:
 
 <p align="center">
-  <img src="assets/screenshot-review.png" width="420" alt="dropin install dialog">
+  <img src="assets/screenshot-install-dialog.png" width="480" alt="dropin install dialog on a real AppImage">
+</p>
+
+Or use the terminal — dry-run, verified install, and the ledger at work:
+
+<p align="center">
+  <img src="assets/screenshot-terminal-install.png" width="700" alt="dropin terminal workflow: info, install, list">
+</p>
+
+One click later, it's in your menu — and removable with one command:
+
+<p align="center">
+  <img src="assets/screenshot-done.png" width="480" alt="dropin install complete">
 </p>
 
 ## What it handles
