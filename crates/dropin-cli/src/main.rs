@@ -29,6 +29,9 @@ enum Cmd {
         /// Prefer a real system install via the distro package manager (needs root).
         #[arg(long)]
         system: bool,
+        /// Allow installer scripts (.sh/.run/.bin) internet access in the sandbox.
+        #[arg(long)]
+        allow_net: bool,
     },
     /// Remove an app installed by dropin.
     Remove {
@@ -128,11 +131,14 @@ fn run() -> dropin_core::Result<()> {
             yes,
             keep_source,
             system,
+            allow_net,
         } => {
             let opts = InstallOptions {
                 yes,
                 keep_source,
                 system,
+                allow_net,
+                quiet: false,
             };
             // Show the plan first unless --yes.
             if !yes {

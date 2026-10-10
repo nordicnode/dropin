@@ -20,6 +20,10 @@ pub struct InstallOptions {
     pub keep_source: bool,
     /// Prefer a real system install (needs root via polkit/sudo) where supported.
     pub system: bool,
+    /// Allow installer scripts internet access inside the sandbox.
+    pub allow_net: bool,
+    /// Suppress progress printing (the GUI presents its own UI).
+    pub quiet: bool,
 }
 
 /// A dry-run description of what installing `src` would do.

@@ -108,6 +108,16 @@ pub fn remove(name: &str, purge: bool) -> Result<()> {
                 })
                 .unwrap_or_else(|| slug.clone());
             handlers::flatpak::remove_external(&id)?;
+        } else if inst.format == "installer script" {
+            // Script installs are fully reversible: undo deletes what the
+            // installer added and restores what it changed or deleted.
+            match handlers::script::undo_install(&slug) {
+                Ok(msg) => println!("{msg}"),
+                Err(e) => println!(
+                    "note: '{}' was installed by a vendor script; {}",
+                    inst.name, e
+                ),
+            }
         } else {
             println!(
                 "note: '{}' was installed externally ({}); dropin removed its ledger entry, but files installed by the vendor script / system package manager remain — use that tool to fully uninstall",
