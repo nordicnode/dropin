@@ -88,7 +88,7 @@ $ dropin update --all        # on demand only. never in the background.
 [up-to-date] firefox     already current
 ```
 
-Update channels are captured at install time (AppImage zsync info, Flatpak remotes); `dropin update` acts on what it can and is honest about the rest. AppImages update over a **native zsync delta** — only the changed blocks are downloaded, the result is SHA-1 verified, and the old version is snapshotted first so `dropin rollback <name>` can always put it back.
+Update channels are captured at install time (AppImage zsync info, Flatpak remotes); `dropin update` acts on what it can and is honest about the rest. AppImages update over a **native zsync delta** — only the changed blocks are downloaded, the result is SHA-1 verified, and the old version is snapshotted first so `dropin rollback <name>` can always put it back. Apps from GitHub releases without a zsync channel can be followed with `dropin track <name> --github owner/repo`: update checks use ETag caching (no quota burned on 304s), and new releases are downloaded, snapshotted, and installed automatically.
 
 ## Install
 
@@ -112,7 +112,9 @@ dropin remove <name>      # clean removal, reversed from the ledger
 dropin remove --purge <name>  # also trash leftover config/cache/data dirs
 dropin update [name|--all]  # check for updates, on demand only
 dropin rollback <name>    # restore an AppImage to its pre-update snapshot
-dropin doctor             # verify helper tools
+dropin track <name> --github owner/repo    # follow a GitHub repo's releases
+dropin untrack <name>     # stop following
+dropin doctor             # verify helper tools (incl. broken menu entries)
 dropin integrate          # double-click + file-manager integration
 dropin unintegrate        # remove all desktop integration
 ```
