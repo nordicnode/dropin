@@ -20,18 +20,14 @@ pub fn prefix_for(slug: &str) -> PathBuf {
     prefix_root().join(slug)
 }
 
-/// True when Wine is available.
+/// True when Wine is available (system or portable).
 pub fn have_wine() -> bool {
-    crate::have("wine") || crate::have("wine64")
+    super::wine_setup::wine_binary().is_some()
 }
 
 /// The wine binary to use.
-fn wine_bin() -> &'static str {
-    if crate::have("wine64") {
-        "wine64"
-    } else {
-        "wine"
-    }
+fn wine_bin() -> PathBuf {
+    super::wine_setup::wine_binary().unwrap_or_else(|| PathBuf::from("wine"))
 }
 
 /// Distro-specific instructions for installing Wine, for the GUI's guided setup.
@@ -171,7 +167,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         "[Desktop Entry]\nType=Application\nName={}\nExec=env WINEPREFIX={} {} \"{}\"\nCategories=Utility;\nTerminal=false\n",
         d.name_hint,
         prefix.display(),
-        wine_bin(),
+        wine_bin().display(),
         exe.display()
     );
     std::fs::write(&desktop_path, desktop_text)?;

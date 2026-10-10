@@ -915,7 +915,24 @@ impl ManagerApp {
                             );
                         });
                     } else {
-                        style::dim_label(ui, &dropin_core::handlers::wine::install_instructions());
+                        style::dim_label(
+                            ui,
+                            "Wine isn't installed. dropin can set it up automatically.",
+                        );
+                        ui.add_space(4.0);
+                        if style::primary_button_enabled(ui, !busy, "Set up Wine").clicked() {
+                            self.run_op("Setting up Wine", || {
+                                let message =
+                                    match dropin_core::handlers::wine_setup::auto_setup(&|_| {}) {
+                                        Ok(_) => "Wine is ready.".to_string(),
+                                        Err(e) => format!("Wine setup failed: {e}"),
+                                    };
+                                OpDone {
+                                    message,
+                                    refresh_apps: false,
+                                }
+                            });
+                        }
                     }
                 });
             if !open {

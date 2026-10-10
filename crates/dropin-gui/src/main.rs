@@ -91,6 +91,18 @@ struct ReviewState {
     /// Script-installer safety audit (empty for other formats).
     findings: Vec<script::Finding>,
     allow_net: bool,
+    /// Set when the user starts automated Wine setup.
+    wine_setup: Option<WineSetupState>,
+}
+
+struct WineSetupState {
+    rx: Receiver<WineSetupResult>,
+    status: String,
+}
+
+struct WineSetupResult {
+    ok: bool,
+    message: String,
 }
 
 enum Phase {
@@ -147,6 +159,7 @@ impl DropinApp {
                         trust_checked: false,
                         findings,
                         allow_net: false,
+                        wine_setup: None,
                     })
                 }
             },
@@ -341,14 +354,66 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             style::dim_label(ui, step);
         });
     }
-    // Wine guidance for Windows apps.
-    let wine_missing = st.detection.format == dropin_core::detect::Format::WindowsExe
-        && !dropin_core::handlers::wine::have_wine();
-    if wine_missing {
+    // Wine setup for Windows apps.
+    let is_windows = st.detection.format == dropin_core::detect::Format::WindowsExe;
+    let wine_missing = is_windows && !dropin_core::handlers::wine::have_wine();
+    // Poll an in-progress setup.
+    if let Some(ws) = &mut st.wine_setup {
+        if let Ok(res) = ws.rx.try_recv() {
+            if res.ok {
+                st.wine_setup = None;
+            } else {
+                ws.status = format!("Setup failed: {}", res.message);
+                st.wine_setup = None;
+                // Keep the error visible via a new setup state in error.
+            }
+        }
+    }
+    if wine_missing && st.wine_setup.is_none() {
         ui.add_space(8.0);
         style::card_frame().show(ui, |ui| {
-            style::dim_label(ui, &dropin_core::handlers::wine::install_instructions());
+            ui.label(
+                egui::RichText::new("Wine isn't installed yet")
+                    .strong()
+                    .size(15.0),
+            );
+            ui.add_space(4.0);
+            style::dim_label(
+                ui,
+                "Windows apps need Wine to run. dropin can set it up \
+                 automatically — it'll try your system package manager first, \
+                 then fall back to a portable Wine that needs no admin rights.",
+            );
+            ui.add_space(8.0);
+            if style::primary_button(ui, "Set up Wine automatically").clicked() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let result = dropin_core::handlers::wine_setup::auto_setup(&|_| {});
+                    let _ = tx.send(WineSetupResult {
+                        ok: result.is_ok(),
+                        message: result.err().map(|e| e.to_string()).unwrap_or_default(),
+                    });
+                });
+                st.wine_setup = Some(WineSetupState {
+                    rx,
+                    status: "Starting…".into(),
+                });
+            }
         });
+    } else if let Some(ws) = &st.wine_setup {
+        ui.add_space(8.0);
+        style::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Setting up Wine…").strong().size(15.0));
+            });
+            ui.add_space(4.0);
+            style::dim_label(ui, &ws.status);
+            style::faint_label(ui, "This may take a few minutes on first run.");
+        });
+        // Keep repainting while setup runs.
+        ui.ctx().request_repaint();
     }
     if st.plan.needs_root {
         ui.add_space(4.0);
@@ -418,7 +483,8 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             st.verified,
             dropin_core::verify::Verification::Mismatch { .. }
         );
-        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !wine_missing;
+        let wine_blocked = wine_missing || st.wine_setup.is_some();
+        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !wine_blocked;
         let clicked = style::primary_button_enabled(ui, can_install, "Install").clicked();
         if style::ghost_button(ui, "Cancel").clicked() {
             std::process::exit(0);

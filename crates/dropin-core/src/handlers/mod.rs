@@ -9,6 +9,7 @@ pub mod rpm;
 pub mod script;
 pub mod tarball;
 pub mod wine;
+pub mod wine_setup;
 
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};

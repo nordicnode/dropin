@@ -67,7 +67,7 @@ One click later it's in your menu, and removing it later is just as easy:
 | `.tar.gz` / `.tar.xz` / `.zip` | Actually looks at what's inside. Real app? It gets installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken "install" |
 | `.flatpakref` / `.flatpak` | Hands it to `flatpak install --user` |
 | `.sh` / `.run` / `.bin` | Tells you it's an executable vendor script and won't run it until you explicitly say so |
-| `.exe` / `.msi` | Full Wine integration: isolated prefix per app (like Lutris), guided Wine setup if missing, menu entry, tracked for clean removal |
+| `.exe` / `.msi` | Zero-friction Wine: one-click automatic setup (system package manager or portable Wine, no admin needed), isolated prefix per app, DXVK for games, menu entry, tracked for clean removal |
 
 Detection goes by magic bytes, not file extensions. Rename a `.deb` to `.txt` and dropin still knows what it's looking at.
 
@@ -140,6 +140,7 @@ dropin set-env <name> <key> <value>    # set an env var used when launching
 dropin unset-env <name> <key>          # remove an env var
 dropin export <file>      # back up the app list to JSON
 dropin import <file>      # review an exported app list
+dropin setup-wine         # install Wine automatically for Windows apps
 dropin integrate          # double-click plus file-manager plus menu integration
 dropin unintegrate        # remove all desktop integration
 ```

@@ -73,6 +73,9 @@ enum Cmd {
     List,
     /// Check helper tools and environment.
     Doctor,
+    /// Set up Wine automatically for Windows apps (tries system package
+    /// manager first, falls back to portable Wine).
+    SetupWine,
     /// Register dropin with the desktop: double-click handling plus
     /// “Install as application” in Dolphin, Nemo, Nautilus, and Thunar.
     Integrate,
@@ -250,6 +253,9 @@ fn run() -> dropin_core::Result<()> {
             for (tool, ok, why) in install::doctor() {
                 println!("{} {:24} ({why})", if ok { "ok " } else { "MISS" }, tool);
             }
+            if !dropin_core::handlers::wine::have_wine() {
+                println!("\nWine is missing. Run `dropin setup-wine` to install it automatically.");
+            }
             let issues = dropin_core::health::check();
             if issues.is_empty() {
                 println!("\nhealth: no issues found");
@@ -269,6 +275,16 @@ fn run() -> dropin_core::Result<()> {
                 }
             }
             Ok(())
+        }
+        Cmd::SetupWine => {
+            println!("Setting up Wine for Windows apps…");
+            match dropin_core::handlers::wine_setup::auto_setup(&|msg| println!("  {msg}")) {
+                Ok(path) => {
+                    println!("\nWine is ready: {}", path.display());
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         }
         Cmd::Integrate => dropin_core::integrate::integrate(true),
         Cmd::Unintegrate => dropin_core::integrate::integrate(false),
