@@ -12,6 +12,7 @@ pub mod install;
 pub mod integrate;
 pub mod ledger;
 pub mod settings;
+pub mod signatures;
 pub mod verify;
 pub mod zsync;
 pub mod github;

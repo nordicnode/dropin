@@ -246,6 +246,7 @@ mod tests {
             update_info: None,
             verified: false,
             github_repo: None,
+            signing_key: None,
             created_at: created_at.into(),
             files: vec![],
         }

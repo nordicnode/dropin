@@ -24,6 +24,8 @@ pub struct Install {
     pub verified: bool,
     /// GitHub repo ("owner/repo") tracked for release updates.
     pub github_repo: Option<String>,
+    /// Pinned OpenPGP signing-key fingerprint (TOFU).
+    pub signing_key: Option<String>,
     pub created_at: String,
     pub files: Vec<String>,
 }
@@ -97,6 +99,12 @@ impl Ledger {
             self.conn
                 .execute("ALTER TABLE installs ADD COLUMN github_repo TEXT", [])?;
         }
+        // Migration (Phase 6): pinned OpenPGP signing-key fingerprint
+        // (TOFU on first install; updates refuse a changed key).
+        if !cols.iter().any(|c| c == "signing_key") {
+            self.conn
+                .execute("ALTER TABLE installs ADD COLUMN signing_key TEXT", [])?;
+        }
         Ok(())
     }
 }
@@ -113,6 +121,7 @@ pub struct NewInstall {
     pub update_info: Option<String>,
     pub verified: bool,
     pub github_repo: Option<String>,
+    pub signing_key: Option<String>,
     pub files: Vec<PathBuf>,
 }
 
@@ -123,8 +132,8 @@ impl Ledger {
         self.conn
             .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
-            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 inst.name,
                 inst.format,
@@ -136,6 +145,7 @@ impl Ledger {
                 inst.update_info,
                 inst.verified as i32,
                 inst.github_repo,
+                inst.signing_key,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -148,9 +158,19 @@ impl Ledger {
         Ok(id)
     }
 
+    /// Update the pinned signing key (used when a signature is found on
+    /// update and none was pinned, i.e. TOFU on a later version).
+    pub fn set_signing_key(&self, name: &str, key: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE installs SET signing_key = ?1 WHERE name = ?2",
+            params![key, name],
+        )?;
+        Ok(())
+    }
+
     pub fn get(&self, name: &str) -> Result<Install> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
@@ -169,7 +189,8 @@ impl Ledger {
             update_info: row.get(8)?,
             verified: row.get::<_, i32>(9)? != 0,
             github_repo: row.get(10)?,
-            created_at: row.get(11)?,
+            signing_key: row.get(11)?,
+            created_at: row.get(12)?,
             files,
         })
     }
@@ -186,7 +207,7 @@ impl Ledger {
 
     pub fn list(&self) -> Result<Vec<Install>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at
              FROM installs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -202,12 +223,13 @@ impl Ledger {
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, i32>(9)?,
                 row.get::<_, Option<String>>(10)?,
-                row.get::<_, String>(11)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, created_at) =
+            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at) =
                 r?;
             out.push(Install {
                 id,
@@ -221,6 +243,7 @@ impl Ledger {
                 update_info,
                 verified: verified != 0,
                 github_repo,
+                signing_key,
                 created_at,
                 files: self.files_for(id)?,
             });
@@ -280,6 +303,25 @@ impl Ledger {
     }
 
     /// Remove the ledger rows for an install (call *after* deleting the files).
+    /// Swap one tracked file path for another (used when migrating an
+    /// install's on-disk layout, e.g. flat AppImage -> generation dir).
+    pub fn replace_file(&self, name: &str, old: &str, new: &str) -> Result<()> {
+        let id: i64 = self.conn.query_row(
+            "SELECT id FROM installs WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )?;
+        self.conn.execute(
+            "DELETE FROM files WHERE install_id = ?1 AND path = ?2",
+            params![id, old],
+        )?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO files (install_id, path) VALUES (?1, ?2)",
+            params![id, new],
+        )?;
+        Ok(())
+    }
+
     pub fn forget(&self, name: &str) -> Result<()> {
         let n = self
             .conn

@@ -22,6 +22,9 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
     })
 }
 
+/// Generation-based install: `~/Applications/<slug>/<version>/<file>`,
+/// with an `active` symlink flipped atomically. Rollback is just repointing
+/// the symlink; old generations are pruned to the last two.
 pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let d = detect::detect(src)?;
     if d.format != detect::Format::AppImage {
@@ -36,23 +39,44 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let file_name = src
         .file_name()
         .ok_or_else(|| Error::Unsupported("bad file name".into()))?;
-    let dest: PathBuf = dirs.applications.join(file_name);
+    let file_name_str = file_name.to_string_lossy();
+
+    // Pre-flight: architecture match. Warn if the filename names a
+    // different arch (e.g. aarch64 AppImage on x86_64).
+    preflight_arch(&file_name_str)?;
+
+    // Pre-flight: disk space (need ~2x file size for copy + work).
+    let src_size = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    preflight_disk(&dirs.applications, src_size)?;
+
     let slug = slugify(&d.name_hint);
-    if dest.exists() {
-        // Is this the same app already installed? Point at update/remove
-        // instead of a bare "already exists".
+    let app_dir = dirs.applications.join(&slug);
+
+    // Detect version early: X-AppImage-Version, else filename, else "unknown".
+    // We need it before placing the file.
+    let mut version: Option<String> = None;
+    // Quick metadata peek for the version (full extraction happens after).
+    // For now, try the filename; the embedded version refines it below.
+    version = version_from_filename(&file_name.to_string_lossy())
+        .or(version);
+    let ver = version.clone().unwrap_or_else(|| "unknown".to_string());
+    let ver_dir = app_dir.join(&ver);
+    let dest = ver_dir.join(file_name);
+
+    if dest.exists() || ver_dir.exists() {
         let hint = match crate::ledger::Ledger::open().and_then(|l| l.get(&slug)) {
             Ok(inst) => format!(
-                "'{}' is already installed ({}). To replace it, remove it first or check for updates.",
-                inst.name, file_name.to_string_lossy()
+                "'{}' version {} is already installed. To replace it, remove it first or check for updates.",
+                inst.name, ver
             ),
             Err(_) => format!(
-                "{} already exists in ~/Applications but isn't tracked by dropin. Rename the file or remove the existing one first.",
+                "{} already exists in ~/Applications but isn't tracked by dropin.",
                 file_name.to_string_lossy()
             ),
         };
         return Err(Error::Refused(hint));
     }
+    std::fs::create_dir_all(&ver_dir)?;
 
     if opts.keep_source {
         std::fs::copy(src, &dest)?;
@@ -72,42 +96,58 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         );
     }
 
-    let mut paths = vec![dest.clone()];
+    // Flip `active` to the new generation atomically (symlink swap).
+    let active = app_dir.join("active");
+    flip_symlink(&active, &dest)?;
+
     let mut update_info: Option<String> = None;
+    let mut extra_paths: Vec<PathBuf> = Vec::new();
 
     // Extract the embedded .desktop file + icon for menu integration.
-    // `--appimage-extract` works without FUSE (type 2 images).
-    let mut version: Option<String> = None;
+    // The menu entry launches via the `active` symlink, so updates and
+    // rollbacks never need to rewrite it.
     match extract_metadata(&dest) {
         Ok(meta) => {
-            // Capture the embedded update channel for `dropin update`,
-            // and the version if the AppImage declares one.
             if let Some(df) = &meta.desktop_file {
                 if let Ok(map) = parse_desktop_file(df) {
                     update_info = map.get("X-AppImage-UpdateInformation").cloned();
-                    version = map.get("X-AppImage-Version").cloned();
+                    // Prefer the embedded version over the filename guess.
+                    if let Some(v) = map.get("X-AppImage-Version") {
+                        version = Some(v.clone());
+                    }
                 }
             }
             let (entry_path, mut extra) = match meta.desktop_file {
-                Some(df) => adopt_desktop_file_appimage(&df, &slug, &d.name_hint, &dest)?,
-                None => generate_entry(&d.name_hint, &slug, &dest)?,
+                Some(df) => adopt_desktop_file_appimage(&df, &slug, &d.name_hint, &active)?,
+                None => generate_entry(&d.name_hint, &slug, &active)?,
             };
             let _ = entry_path;
-            paths.append(&mut extra);
+            extra_paths.append(&mut extra);
             let _ = std::fs::remove_dir_all(meta.scratch);
         }
         Err(e) => {
-            // Integration is best-effort: the AppImage itself still works.
             eprintln!("warning: could not extract AppImage metadata ({e}); using a generic menu entry");
-            let (_, mut extra) = generate_entry(&d.name_hint, &slug, &dest)?;
-            paths.append(&mut extra);
+            let (_, mut extra) = generate_entry(&d.name_hint, &slug, &active)?;
+            extra_paths.append(&mut extra);
         }
     }
 
-    // Fall back to the filename: OpenChamber-2.2.0-linux-x86_64.AppImage.
-    if version.is_none() {
-        version = version_from_filename(&file_name.to_string_lossy());
+    // If the embedded version differs from the filename guess, rename the
+    // version dir. (Rare; keeps the layout truthful.)
+    let final_ver = version.clone().unwrap_or_else(|| "unknown".to_string());
+    if final_ver != ver {
+        let new_ver_dir = app_dir.join(&final_ver);
+        if !new_ver_dir.exists() {
+            std::fs::rename(&ver_dir, &new_ver_dir).ok();
+        }
+        let new_dest = new_ver_dir.join(file_name);
+        flip_symlink(&active, &new_dest).ok();
     }
+
+    // Ledger tracks the app dir (all generations + the active symlink live
+    // inside it), plus the desktop entry and icon outside it.
+    let mut paths = vec![app_dir];
+    paths.extend(extra_paths);
 
     Ok(InstallOutcome {
         name: slug,
@@ -117,6 +157,81 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         external: false,
         update_info,
     })
+}
+
+/// Pre-flight: refuse if the filename clearly targets a different CPU
+/// architecture than this machine.
+fn preflight_arch(file_name: &str) -> Result<()> {
+    let lower = file_name.to_lowercase();
+    let arch = std::env::consts::ARCH;
+    // (arch, aliases that mean "this arch")
+    let known: &[(&str, &[&str])] = &[
+        ("x86_64", &["x86_64", "amd64", "x64"]),
+        ("aarch64", &["aarch64", "arm64"]),
+        ("i686", &["i686", "i386", "x86"]),
+    ];
+    // If the name mentions a *different* known arch, refuse.
+    for (other_arch, aliases) in known {
+        if *other_arch == arch {
+            continue;
+        }
+        if aliases.iter().any(|a| lower.contains(a)) {
+            return Err(Error::Refused(format!(
+                "this AppImage looks built for {other_arch}, but this machine is {arch}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Pre-flight: ensure enough free disk space (need ~2x the file size).
+fn preflight_disk(dir: &Path, need: u64) -> Result<()> {
+    // statvfs via /proc is overkill; use `df` output parsing is fragile.
+    // Instead: try to get available space via libc statvfs.
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::mem::MaybeUninit;
+        let cpath = CString::new(dir.to_string_lossy().as_bytes()).map_err(|_| {
+            Error::Refused("could not check disk space".to_string())
+        })?;
+        let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+        // SAFETY: statvfs writes to the provided struct.
+        let rc = unsafe { libc::statvfs(cpath.as_ptr(), stat.as_mut_ptr()) };
+        if rc == 0 {
+            let stat = unsafe { stat.assume_init() };
+            let avail = stat.f_bavail * stat.f_frsize;
+            if avail < need.saturating_mul(2) {
+                return Err(Error::Refused(format!(
+                    "not enough disk space: need ~{} free, have {}",
+                    human_size(need * 2),
+                    human_size(avail)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn human_size(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 { format!("{n} B") } else { format!("{v:.1} {}", UNITS[u]) }
+}
+
+/// Atomically point `link` at `target` via rename (POSIX atomic).
+pub fn flip_symlink(link: &Path, target: &Path) -> Result<()> {
+    let tmp = link.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, &tmp)?;
+    std::fs::rename(&tmp, link)?;
+    Ok(())
 }
 
 /// Guess a version from an AppImage filename.
@@ -438,6 +553,42 @@ mod safe_extract_tests {
 
         let off = find_squashfs_offset(&appimage).unwrap().expect("offset found");
         assert_eq!(off, real_at, "skipped the spurious magic");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn install_uses_generation_layout() {
+        let d = tmpdir("gen");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let ai = make_fake_appimage(&d);
+            let outcome = install(&ai, &InstallOptions::default()).unwrap();
+            let slug = outcome.name;
+            let app_dir = home.join("Applications").join(&slug);
+            // Version dir exists with the AppImage inside.
+            let vers: Vec<_> = std::fs::read_dir(&app_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            assert_eq!(vers.len(), 1, "one generation dir");
+            // `active` symlink points at the installed AppImage.
+            let active = app_dir.join("active");
+            assert!(active.is_symlink(), "active symlink exists");
+            let target = std::fs::read_link(&active).unwrap();
+            assert!(target.exists(), "active target exists");
+            assert!(target.to_string_lossy().ends_with(".AppImage"));
+            // Desktop entry Exec points at `active`.
+            let desktop = home.join(format!(
+                ".local/share/applications/dropin-{slug}.desktop"
+            ));
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(
+                text.contains(&active.display().to_string()),
+                "Exec uses active symlink: {text}"
+            );
+        });
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -26,7 +26,7 @@ fn load_apps() -> Vec<AppRow> {
     let mut rows = Vec::new();
     if let Ok(list) = install::list() {
         for inst in list {
-            let has_snapshots = !install::snapshots(&inst.name).is_empty();
+            let has_snapshots = install::can_rollback(&inst.name);
             rows.push(AppRow {
                 name: inst.name,
                 format: inst.format,
