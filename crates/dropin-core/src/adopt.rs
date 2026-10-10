@@ -364,7 +364,6 @@ pub struct AdoptOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::with_home;
 
     #[test]
     fn scan_finds_executables() {
