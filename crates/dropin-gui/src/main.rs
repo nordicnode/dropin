@@ -31,7 +31,7 @@ fn main() {
     let want_manager = file.is_none() || args.iter().any(|a| a == "--manager");
     if want_manager {
         let native = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([720.0, 540.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([880.0, 600.0]),
             ..Default::default()
         };
         if let Err(e) = eframe::run_native(

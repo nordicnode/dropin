@@ -541,18 +541,14 @@ impl eframe::App for ManagerApp {
                 if style::ghost_button(ui, "Settings").clicked() {
                     self.settings_open = true;
                 }
-                // Export/import, right-aligned before search.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("Search apps… (Ctrl+F)")
-                            .desired_width(180.0)
-                            .id(egui::Id::new("search_field")),
-                    );
-                    if resp.changed() {
-                        self.selected.clear();
-                    }
-                    ui.add_space(8.0);
+                // Export/import and search, right-aligned. Reserve their width
+                // first so they never overlap the left buttons.
+                let right_width = 360.0;
+                let avail = ui.available_width();
+                if avail > right_width {
+                    ui.add_space(avail - right_width);
+                }
+                ui.horizontal(|ui| {
                     if style::ghost_button(ui, "Export").clicked() && !busy {
                         if let Some(path) = rfd::FileDialog::new()
                             .set_title("Export app list")
@@ -582,6 +578,16 @@ impl eframe::App for ManagerApp {
                                 path.display()
                             );
                         }
+                    }
+                    ui.add_space(8.0);
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.search)
+                            .hint_text("Search apps… (Ctrl+F)")
+                            .desired_width(180.0)
+                            .id(egui::Id::new("search_field")),
+                    );
+                    if resp.changed() {
+                        self.selected.clear();
                     }
                 });
             });

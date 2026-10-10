@@ -37,7 +37,13 @@ With dropin you just double-click the file. A dialog shows you exactly what it's
 
 ## See it in action
 
-Double-click a real AppImage and dropin shows its whole plan up front, integrity check included:
+The manager is home base: every app you install, with search, filters, and one-click updates:
+
+<p align="center">
+  <img src="assets/screenshot-manager.png" width="700" alt="dropin manager window showing installed apps">
+</p>
+
+Double-click any installer file and dropin shows its whole plan up front, integrity check included:
 
 <p align="center">
   <img src="assets/screenshot-install-dialog.png" width="480" alt="dropin install dialog on a real AppImage">
