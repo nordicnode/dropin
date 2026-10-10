@@ -247,6 +247,7 @@ mod tests {
             verified: false,
             github_repo: None,
             signing_key: None,
+            env_vars: None,
             created_at: created_at.into(),
             files: vec![],
         }

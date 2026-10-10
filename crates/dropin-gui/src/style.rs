@@ -31,6 +31,8 @@ pub mod color {
     pub const WARN: Color32 = Color32::from_rgb(251, 191, 36);
     /// Danger / error.
     pub const BAD: Color32 = Color32::from_rgb(248, 113, 113);
+    /// Info badge.
+    pub const INFO: Color32 = Color32::from_rgb(96, 165, 250);
     /// App badge fill.
     pub const BADGE_A: Color32 = Color32::from_rgb(91, 157, 255);
 }

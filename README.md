@@ -125,6 +125,7 @@ There's also a CLI that does the same things, handy for scripting:
 
 ```text
 dropin list               # everything dropin installed (✓ = checksum-verified)
+dropin launch <name>      # run an installed app
 dropin update [name|--all]  # check for updates, on demand only
 dropin rollback <name>    # restore an AppImage to its previous version
 dropin track <name> --github owner/repo    # follow a GitHub repo's releases
@@ -135,11 +136,15 @@ dropin doctor             # health checks: broken menus, orphans, missing tools
 dropin info <file>        # dry run showing exactly what would happen, no changes
 dropin install <file>     # install (shows the plan first; scripts need confirmation)
 dropin install --allow-net <file>  # let a sandboxed script use the internet
+dropin set-env <name> <key> <value>    # set an env var used when launching
+dropin unset-env <name> <key>          # remove an env var
+dropin export <file>      # back up the app list to JSON
+dropin import <file>      # review an exported app list
 dropin integrate          # double-click plus file-manager plus menu integration
 dropin unintegrate        # remove all desktop integration
 ```
 
-The manager GUI (`dropin-gui`, or just **dropin** in your app menu) does all of this visually: drag-and-drop install, per-app update/rollback/remove, GitHub tracking, doctor, and settings. It can also check for updates automatically when it opens (opt-in, in settings).
+The manager GUI (`dropin-gui`, or just **dropin** in your app menu) does all of this visually: drag-and-drop install, per-app launch/update/rollback/remove, environment variables, GitHub tracking, doctor, and settings. Search to filter the list, select multiple apps for bulk update/remove, and export your app list for backup. It can also check for updates automatically when it opens (opt-in, in settings).
 
 ## Why not…
 

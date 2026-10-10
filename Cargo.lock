@@ -1359,6 +1359,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dropin-core",
+ "serde_json",
 ]
 
 [[package]]
@@ -1387,6 +1388,7 @@ dependencies = [
  "eframe",
  "notify-rust",
  "rfd",
+ "serde_json",
 ]
 
 [[package]]

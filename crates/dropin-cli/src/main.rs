@@ -75,6 +75,37 @@ enum Cmd {
     Integrate,
     /// Remove all desktop and file-manager integration.
     Unintegrate,
+    /// Launch an installed app.
+    Launch {
+        /// Name of the app to launch.
+        name: String,
+    },
+    /// Set an environment variable for an app (used when launching).
+    SetEnv {
+        /// Name of the app.
+        name: String,
+        /// Variable name.
+        key: String,
+        /// Variable value.
+        value: String,
+    },
+    /// Remove an environment variable from an app.
+    UnsetEnv {
+        /// Name of the app.
+        name: String,
+        /// Variable name.
+        key: String,
+    },
+    /// Export the app list to a JSON file (for backup or migration).
+    Export {
+        /// Output file path.
+        file: PathBuf,
+    },
+    /// Import an app list from a JSON file.
+    Import {
+        /// Input file path.
+        file: PathBuf,
+    },
 }
 
 fn main() {
@@ -234,6 +265,57 @@ fn run() -> dropin_core::Result<()> {
         }
         Cmd::Integrate => dropin_core::integrate::integrate(true),
         Cmd::Unintegrate => dropin_core::integrate::integrate(false),
+        Cmd::Launch { name } => {
+            let msg = install::launch(&name)?;
+            println!("{msg}");
+            Ok(())
+        }
+        Cmd::SetEnv { name, key, value } => {
+            let ledger = dropin_core::ledger::Ledger::open()?;
+            let mut env = ledger.env_vars(&name).unwrap_or_default();
+            env.insert(key.clone(), value.clone());
+            let json = serde_json::to_string(&env).map_err(|e| {
+                dropin_core::Error::Unsupported(format!("couldn't save env vars: {e}"))
+            })?;
+            ledger.set_env_vars(&dropin_core::slugify(&name), &json)?;
+            println!("Set {key} for '{name}'.");
+            Ok(())
+        }
+        Cmd::UnsetEnv { name, key } => {
+            let ledger = dropin_core::ledger::Ledger::open()?;
+            let mut env = ledger.env_vars(&name).unwrap_or_default();
+            env.remove(&key);
+            let json = serde_json::to_string(&env).map_err(|e| {
+                dropin_core::Error::Unsupported(format!("couldn't save env vars: {e}"))
+            })?;
+            ledger.set_env_vars(&dropin_core::slugify(&name), &json)?;
+            println!("Removed {key} from '{name}'.");
+            Ok(())
+        }
+        Cmd::Export { file } => {
+            let apps = install::list()?;
+            let json = serde_json::to_string_pretty(&apps).map_err(|e| {
+                dropin_core::Error::Unsupported(format!("couldn't export: {e}"))
+            })?;
+            std::fs::write(&file, json)?;
+            println!("Exported {} apps to {}.", apps.len(), file.display());
+            Ok(())
+        }
+        Cmd::Import { file } => {
+            let json = std::fs::read_to_string(&file)?;
+            let apps: Vec<dropin_core::ledger::Install> = serde_json::from_str(&json).map_err(|e| {
+                dropin_core::Error::Unsupported(format!("couldn't import: {e}"))
+            })?;
+            println!(
+                "Found {} apps in {}. Reinstall them from their original files to restore.",
+                apps.len(),
+                file.display()
+            );
+            for app in &apps {
+                println!("  {} {} ({})", app.name, app.version.as_deref().unwrap_or(""), app.format);
+            }
+            Ok(())
+        }
     }
 }
 

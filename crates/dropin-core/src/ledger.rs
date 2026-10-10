@@ -5,7 +5,7 @@ use crate::{Error, Result, UserDirs};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Install {
     pub id: i64,
     pub name: String,
@@ -26,6 +26,8 @@ pub struct Install {
     pub github_repo: Option<String>,
     /// Pinned OpenPGP signing-key fingerprint (TOFU).
     pub signing_key: Option<String>,
+    /// Per-app environment variables (JSON object, e.g. {"FOO": "bar"}).
+    pub env_vars: Option<String>,
     pub created_at: String,
     pub files: Vec<String>,
 }
@@ -130,6 +132,11 @@ impl Ledger {
             self.conn
                 .execute("ALTER TABLE installs ADD COLUMN signing_key TEXT", [])?;
         }
+        // Migration: per-app environment variables (JSON object).
+        if !cols.iter().any(|c| c == "env_vars") {
+            self.conn
+                .execute("ALTER TABLE installs ADD COLUMN env_vars TEXT", [])?;
+        }
         Ok(())
     }
 }
@@ -147,6 +154,7 @@ pub struct NewInstall {
     pub verified: bool,
     pub github_repo: Option<String>,
     pub signing_key: Option<String>,
+    pub env_vars: Option<String>,
     pub files: Vec<PathBuf>,
 }
 
@@ -157,8 +165,8 @@ impl Ledger {
         self.conn
             .execute("DELETE FROM installs WHERE name = ?1", params![inst.name])?;
         self.conn.execute(
-            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO installs (name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 inst.name,
                 inst.format,
@@ -171,6 +179,7 @@ impl Ledger {
                 inst.verified as i32,
                 inst.github_repo,
                 inst.signing_key,
+                inst.env_vars,
             ],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -193,9 +202,29 @@ impl Ledger {
         Ok(())
     }
 
+    /// Set per-app environment variables (JSON object string).
+    pub fn set_env_vars(&self, name: &str, json: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE installs SET env_vars = ?1 WHERE name = ?2",
+            params![json, name],
+        )?;
+        Ok(())
+    }
+
+    /// Get per-app environment variables as a map.
+    pub fn env_vars(&self, name: &str) -> Result<std::collections::BTreeMap<String, String>> {
+        let inst = self.get(name)?;
+        match inst.env_vars {
+            Some(json) => serde_json::from_str(&json).map_err(|e| {
+                crate::Error::Unsupported(format!("bad env vars for {name}: {e}"))
+            }),
+            None => Ok(std::collections::BTreeMap::new()),
+        }
+    }
+
     pub fn get(&self, name: &str) -> Result<Install> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars, created_at
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
@@ -215,7 +244,8 @@ impl Ledger {
             verified: row.get::<_, i32>(9)? != 0,
             github_repo: row.get(10)?,
             signing_key: row.get(11)?,
-            created_at: row.get(12)?,
+            env_vars: row.get(12)?,
+            created_at: row.get(13)?,
             files,
         })
     }
@@ -232,7 +262,7 @@ impl Ledger {
 
     pub fn list(&self) -> Result<Vec<Install>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at
+            "SELECT id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars, created_at
              FROM installs ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -249,12 +279,13 @@ impl Ledger {
                 row.get::<_, i32>(9)?,
                 row.get::<_, Option<String>>(10)?,
                 row.get::<_, Option<String>>(11)?,
-                row.get::<_, String>(12)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, String>(13)?,
             ))
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, created_at) =
+            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars, created_at) =
                 r?;
             out.push(Install {
                 id,
@@ -269,6 +300,7 @@ impl Ledger {
                 verified: verified != 0,
                 github_repo,
                 signing_key,
+                env_vars,
                 created_at,
                 files: self.files_for(id)?,
             });

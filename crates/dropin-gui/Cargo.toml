@@ -12,3 +12,4 @@ dropin-core = { path = "../dropin-core" }
 eframe = "0.32"
 rfd = "0.15"
 notify-rust = "4"
+serde_json = { workspace = true }

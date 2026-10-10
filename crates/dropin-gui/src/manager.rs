@@ -21,6 +21,7 @@ struct AppRow {
     verified: bool,
     github_repo: Option<String>,
     has_snapshots: bool,
+    has_env: bool,
 }
 
 fn load_apps() -> Vec<AppRow> {
@@ -28,6 +29,11 @@ fn load_apps() -> Vec<AppRow> {
     if let Ok(list) = install::list() {
         for inst in list {
             let has_snapshots = install::can_rollback(&inst.name);
+            let has_env = inst
+                .env_vars
+                .as_ref()
+                .map(|j| j != "{}" && !j.is_empty())
+                .unwrap_or(false);
             rows.push(AppRow {
                 name: inst.name,
                 format: inst.format,
@@ -35,6 +41,7 @@ fn load_apps() -> Vec<AppRow> {
                 verified: inst.verified,
                 github_repo: inst.github_repo,
                 has_snapshots,
+                has_env,
             });
         }
     }
@@ -70,6 +77,15 @@ pub struct ManagerApp {
     settings: settings::Settings,
     settings_open: bool,
     auto_checked: bool,
+    // env var editor
+    env_name: Option<String>,
+    env_vars: Vec<(String, String)>,
+    env_new_key: String,
+    env_new_value: String,
+    // search/filter
+    search: String,
+    // bulk selection
+    selected: std::collections::BTreeSet<String>,
 }
 
 impl ManagerApp {
@@ -90,6 +106,41 @@ impl ManagerApp {
             settings: settings::load(),
             settings_open: false,
             auto_checked: false,
+            env_name: None,
+            env_vars: Vec::new(),
+            env_new_key: String::new(),
+            env_new_value: String::new(),
+            search: String::new(),
+            selected: std::collections::BTreeSet::new(),
+        }
+    }
+
+    fn load_env_vars(&self) -> Vec<(String, String)> {
+        let name = match &self.env_name {
+            Some(n) => n,
+            None => return Vec::new(),
+        };
+        let ledger = match dropin_core::ledger::Ledger::open() {
+            Ok(l) => l,
+            Err(_) => return Vec::new(),
+        };
+        ledger
+            .env_vars(&dropin_core::slugify(name))
+            .map(|m| m.into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    fn save_env_vars(&self) {
+        let name = match &self.env_name {
+            Some(n) => n.clone(),
+            None => return,
+        };
+        let map: std::collections::BTreeMap<String, String> =
+            self.env_vars.iter().cloned().collect();
+        if let Ok(json) = serde_json::to_string(&map) {
+            if let Ok(ledger) = dropin_core::ledger::Ledger::open() {
+                let _ = ledger.set_env_vars(&dropin_core::slugify(&name), &json);
+            }
         }
     }
 
@@ -241,7 +292,97 @@ impl eframe::App for ManagerApp {
                 if style::ghost_button(ui, "Settings").clicked() {
                     self.settings_open = true;
                 }
+                // Export/import, right-aligned before search.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.search)
+                            .hint_text("Search apps…")
+                            .desired_width(180.0),
+                    );
+                    if resp.changed() {
+                        self.selected.clear();
+                    }
+                    ui.add_space(8.0);
+                    if style::ghost_button(ui, "Export").clicked() && !busy {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Export app list")
+                            .set_file_name("dropin-apps.json")
+                            .save_file()
+                        {
+                            if let Ok(apps) = install::list() {
+                                if let Ok(json) = serde_json::to_string_pretty(&apps) {
+                                    if std::fs::write(&path, json).is_ok() {
+                                        self.status = format!(
+                                            "Exported {} apps to {}.",
+                                            apps.len(),
+                                            path.display()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if style::ghost_button(ui, "Import").clicked() && !busy {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Import app list")
+                            .pick_file()
+                        {
+                            self.status = format!(
+                                "Import from {}: reinstall apps from their original files.",
+                                path.display()
+                            );
+                        }
+                    }
+                });
             });
+            // Bulk actions bar, only when something is selected.
+            if !self.selected.is_empty() {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{} selected", self.selected.len()))
+                            .small()
+                            .color(style::color::TEXT_DIM),
+                    );
+                    ui.add_space(8.0);
+                    if ui.button("Update selected").clicked() && !busy {
+                        let names: Vec<String> = self.selected.iter().cloned().collect();
+                        self.run_op("Updating selected", move || {
+                            let mut all = Vec::new();
+                            for n in &names {
+                                if let Ok(reports) = install::update(Some(n), false) {
+                                    all.extend(reports);
+                                }
+                            }
+                            OpDone {
+                                message: fmt_reports(all),
+                                refresh_apps: true,
+                            }
+                        });
+                        self.selected.clear();
+                    }
+                    if ui.button("Remove selected").clicked() && !busy {
+                        let names: Vec<String> = self.selected.iter().cloned().collect();
+                        self.run_op("Removing selected", move || {
+                            let mut msgs = Vec::new();
+                            for n in &names {
+                                match install::remove(n, false) {
+                                    Ok(m) => msgs.push(m),
+                                    Err(e) => msgs.push(format!("Couldn't remove {n}: {e}")),
+                                }
+                            }
+                            OpDone {
+                                message: msgs.join("\n"),
+                                refresh_apps: true,
+                            }
+                        });
+                        self.selected.clear();
+                    }
+                    if style::ghost_button(ui, "Clear").clicked() {
+                        self.selected.clear();
+                    }
+                });
+            }
             ui.add_space(4.0);
         });
 
@@ -276,6 +417,25 @@ impl eframe::App for ManagerApp {
                 });
                 return;
             }
+            // Filter by search.
+            let query = self.search.trim().to_lowercase();
+            let filtered: Vec<AppRow> = self
+                .apps
+                .iter()
+                .filter(|a| {
+                    query.is_empty()
+                        || a.name.to_lowercase().contains(&query)
+                        || a.format.to_lowercase().contains(&query)
+                })
+                .cloned()
+                .collect();
+            if filtered.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(egui::RichText::new("No apps match your search").size(16.0).strong());
+                });
+                return;
+            }
             ui.label(
                 egui::RichText::new(format!(
                     "{} app{} installed",
@@ -287,10 +447,20 @@ impl eframe::App for ManagerApp {
             );
             ui.add_space(8.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for i in 0..self.apps.len() {
+                for app in &filtered {
                     // Clone the row: app_card may mutate self (dialogs, ops).
-                    let app = self.apps[i].clone();
-                    self.app_card(ui, &app, busy);
+                    let app = app.clone();
+                    let mut checked = self.selected.contains(&app.name);
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut checked, "").changed() {
+                            if checked {
+                                self.selected.insert(app.name.clone());
+                            } else {
+                                self.selected.remove(&app.name);
+                            }
+                        }
+                        self.app_card(ui, &app, busy);
+                    });
                     ui.add_space(8.0);
                 }
             });
@@ -323,6 +493,8 @@ impl ManagerApp {
             Remove,
             Track,
             Untrack,
+            Launch,
+            EnvVars,
         }
         let mut act = Act::None;
 
@@ -351,6 +523,9 @@ impl ManagerApp {
                         if let Some(v) = &app.version {
                             style::badge(ui, &format!("v{v}"), style::color::BORDER);
                         }
+                        if app.has_env {
+                            style::badge(ui, "env", style::color::INFO);
+                        }
                     });
                     if let Some(repo) = &app.github_repo {
                         ui.add_space(2.0);
@@ -363,6 +538,12 @@ impl ManagerApp {
                     }
                     if app.has_snapshots && style::ghost_button(ui, "Rollback").clicked() && !busy {
                         act = Act::Rollback;
+                    }
+                    if style::ghost_button(ui, "Env…").clicked() && !busy {
+                        act = Act::EnvVars;
+                    }
+                    if style::primary_button_enabled(ui, !busy, "Launch").clicked() && !busy {
+                        act = Act::Launch;
                     }
                     // Script installs have no update channel or GitHub tracking;
                     // hiding those buttons avoids dead ends.
@@ -408,6 +589,17 @@ impl ManagerApp {
                     .unwrap_or_else(|e| format!("Couldn't untrack: {e}"));
                 OpDone { message, refresh_apps: true }
             }),
+            Act::Launch => {
+                let message = install::launch(&name)
+                    .unwrap_or_else(|e| format!("Couldn't launch: {e}"));
+                self.status = message;
+            }
+            Act::EnvVars => {
+                self.env_name = Some(name);
+                self.env_vars = self.load_env_vars();
+                self.env_new_key.clear();
+                self.env_new_value.clear();
+            }
         }
     }
 
@@ -422,19 +614,37 @@ impl ManagerApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label("Download it. Double-click it. Done.");
-                    ui.add_space(8.0);
-                    ui.label("Set up dropin so double-clicking any installer file\njust works, and apps get menu entries?");
-                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("Download it. Double-click it. Done.")
+                            .size(18.0)
+                            .strong(),
+                    );
+                    ui.add_space(10.0);
+                    style::dim_label(
+                        ui,
+                        "dropin installs AppImages, .debs, .rpms, tarballs, Flatpaks, \
+                         and installer scripts — all without root, all fully reversible.",
+                    );
+                    ui.add_space(10.0);
+                    style::section_title(ui, "One-click setup");
+                    style::dim_label(
+                        ui,
+                        "• Double-click any installer file to open dropin\n\
+                         • “Install as application” in your file manager's right-click menu\n\
+                         • App menu entries for everything you install",
+                    );
+                    ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui.button("Set up dropin").clicked() {
-                                setup = true;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::ghost_button(ui, "Later").clicked() {
+                                close = true;
                             }
+                            ui.add_enabled_ui(!busy, |ui| {
+                                if style::primary_button(ui, "Set up dropin").clicked() {
+                                    setup = true;
+                                }
+                            });
                         });
-                        if ui.button("Later").clicked() {
-                            close = true;
-                        }
                     });
                 });
             if close {
@@ -653,6 +863,70 @@ impl ManagerApp {
                 });
             if !open {
                 self.doctor_open = false;
+            }
+        }
+
+        // ---- env var editor ----
+        if let Some(name) = self.env_name.clone() {
+            let mut open = true;
+            let mut close = false;
+            egui::Window::new(format!("Environment for {name}"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    style::dim_label(
+                        ui,
+                        "These variables are set when you launch the app from dropin.",
+                    );
+                    ui.add_space(8.0);
+                    let mut remove_idx: Option<usize> = None;
+                    for (i, (k, v)) in self.env_vars.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(k);
+                            ui.label("=");
+                            ui.text_edit_singleline(v);
+                            if style::ghost_button(ui, "✕").clicked() {
+                                remove_idx = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove_idx {
+                        self.env_vars.remove(i);
+                        self.save_env_vars();
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut self.env_new_key);
+                        ui.label("=");
+                        ui.text_edit_singleline(&mut self.env_new_value);
+                        if style::primary_button_enabled(
+                            ui,
+                            !self.env_new_key.trim().is_empty(),
+                            "Add",
+                        )
+                        .clicked()
+                        {
+                            self.env_vars.push((
+                                self.env_new_key.trim().to_string(),
+                                self.env_new_value.clone(),
+                            ));
+                            self.env_new_key.clear();
+                            self.env_new_value.clear();
+                            self.save_env_vars();
+                        }
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::primary_button(ui, "Done").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                });
+            if !open || close {
+                self.env_name = None;
             }
         }
     }

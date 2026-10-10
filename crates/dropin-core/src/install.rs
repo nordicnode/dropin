@@ -4,6 +4,7 @@ use crate::detect::{self, Format};
 use crate::handlers::{self, InstallOptions, InstallOutcome, InstallPlan};
 use crate::ledger::{remove_path, Ledger};
 use crate::{have, slugify, Error, Result, UserDirs};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn plan_for(src: &Path) -> Result<InstallPlan> {
@@ -82,6 +83,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         verified,
         github_repo: None,
         signing_key,
+        env_vars: None,
         files: outcome.paths.clone(),
     })?;
     Ok(outcome)
@@ -169,6 +171,76 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
 
 pub fn list() -> Result<Vec<crate::ledger::Install>> {
     Ledger::open()?.list()
+}
+
+/// Launch an installed app with its configured environment variables.
+///
+/// Finds the executable from the desktop entry (preferred) or the
+/// installed files, then spawns it detached.
+pub fn launch(name: &str) -> Result<String> {
+    let slug = slugify(name);
+    let ledger = Ledger::open()?;
+    let inst = ledger.get(&slug)?;
+    let dirs = UserDirs::new();
+
+    // Find the executable: prefer the desktop entry's Exec line.
+    let desktop = dirs
+        .desktop_entries
+        .join(format!("dropin-{slug}.desktop"));
+    let mut exe: Option<PathBuf> = None;
+    let mut args: Vec<String> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(&desktop) {
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("Exec=") {
+                let parts: Vec<&str> = rest.split_whitespace().collect();
+                if !parts.is_empty() {
+                    // Skip field codes (%f, %F, %u, %U, etc.).
+                    let clean: Vec<&str> = parts
+                        .into_iter()
+                        .filter(|p| !p.starts_with('%'))
+                        .collect();
+                    if let Some(e) = clean.first() {
+                        exe = Some(PathBuf::from(e));
+                        args = clean[1..].iter().map(|s| s.to_string()).collect();
+                    }
+                }
+                break;
+            }
+        }
+    }
+    // Fallback: find an executable in the tracked files.
+    if exe.is_none() {
+        exe = inst.files.iter().map(PathBuf::from).find(|p| {
+            p.is_file()
+                && std::fs::metadata(p)
+                    .map(|m| m.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+        });
+    }
+    // Fallback for AppImages: the active symlink.
+    if exe.is_none() && inst.format == "AppImage" {
+        let active = dirs.applications.join(&slug).join("active");
+        if active.exists() {
+            exe = Some(active);
+        }
+    }
+    let exe = exe.ok_or_else(|| Error::NotInstalled(format!("no executable found for {name}")))?;
+
+    // Apply per-app environment variables.
+    let env = ledger.env_vars(&slug).unwrap_or_default();
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(&args);
+    for (k, v) in &env {
+        cmd.env(k, v);
+    }
+    // Detach: don't wait, don't inherit stdio.
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd.spawn()
+        .map_err(|e| Error::Command(format!("couldn't launch {name}: {e}")))?;
+    Ok(format!("Launched '{name}'."))
 }
 
 /// The result of checking one app for updates.
