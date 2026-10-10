@@ -12,8 +12,8 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use crate::{Error, Result};
 use crate::zsync::USER_AGENT;
+use crate::{Error, Result};
 
 /// Where ETag cache entries live: `<data>/github_cache/<owner>__<repo>.json`.
 fn cache_file(data_dir: &Path, repo: &str) -> PathBuf {
@@ -57,11 +57,7 @@ pub fn latest_release(repo: &str, data_dir: &Path) -> Result<(Release, bool)> {
 }
 
 /// Fetch the latest release from a specific API base (for tests).
-pub fn latest_release_from(
-    api_base: &str,
-    repo: &str,
-    data_dir: &Path,
-) -> Result<(Release, bool)> {
+pub fn latest_release_from(api_base: &str, repo: &str, data_dir: &Path) -> Result<(Release, bool)> {
     let (owner, name) = repo
         .split_once('/')
         .filter(|(o, n)| !o.is_empty() && !n.is_empty())
@@ -95,16 +91,23 @@ pub fn latest_release_from(
         200 => {
             let mut text = String::new();
             use std::io::Read;
-            res.body_mut().as_reader().read_to_string(&mut text).map_err(|e| {
-                Error::Zsync(format!("reading GitHub response: {e}"))
-            })?;
+            res.body_mut()
+                .as_reader()
+                .read_to_string(&mut text)
+                .map_err(|e| Error::Zsync(format!("reading GitHub response: {e}")))?;
             if let Some(etag) = res.headers().get("etag").and_then(|v| v.to_str().ok()) {
-                let entry = CacheEntry { etag: etag.to_string(), body: text.clone() };
+                let entry = CacheEntry {
+                    etag: etag.to_string(),
+                    body: text.clone(),
+                };
                 if let Some(parent) = cache_path.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                std::fs::write(&cache_path, serde_json::to_string(&entry).unwrap_or_default())
-                    .ok();
+                std::fs::write(
+                    &cache_path,
+                    serde_json::to_string(&entry).unwrap_or_default(),
+                )
+                .ok();
             }
             text
         }
@@ -130,15 +133,27 @@ pub fn latest_release_from(
 }
 
 fn parse_release(body: &str) -> Result<Release> {
-    let v: serde_json::Value =
-        serde_json::from_str(body).map_err(|e| Error::Zsync(format!("bad GitHub response: {e}")))?;
-    let tag = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or("").to_string();
-    let name = v.get("name").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| Error::Zsync(format!("bad GitHub response: {e}")))?;
+    let tag = v
+        .get("tag_name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = v
+        .get("name")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string();
     let mut assets = Vec::new();
     if let Some(arr) = v.get("assets").and_then(|a| a.as_array()) {
         for a in arr {
             assets.push(Asset {
-                name: a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                name: a
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 download_url: a
                     .get("browser_download_url")
                     .and_then(|u| u.as_str())
@@ -271,10 +286,26 @@ mod tests {
             tag: "v1".into(),
             name: "".into(),
             assets: vec![
-                Asset { name: "app-aarch64.AppImage".into(), download_url: "u1".into(), size: 1 },
-                Asset { name: "app-x86_64.AppImage".into(), download_url: "u2".into(), size: 2 },
-                Asset { name: "app-x86_64.AppImage.zsync".into(), download_url: "u3".into(), size: 3 },
-                Asset { name: "app-x86_64.AppImage.sha256".into(), download_url: "u4".into(), size: 4 },
+                Asset {
+                    name: "app-aarch64.AppImage".into(),
+                    download_url: "u1".into(),
+                    size: 1,
+                },
+                Asset {
+                    name: "app-x86_64.AppImage".into(),
+                    download_url: "u2".into(),
+                    size: 2,
+                },
+                Asset {
+                    name: "app-x86_64.AppImage.zsync".into(),
+                    download_url: "u3".into(),
+                    size: 3,
+                },
+                Asset {
+                    name: "app-x86_64.AppImage.sha256".into(),
+                    download_url: "u4".into(),
+                    size: 4,
+                },
             ],
         };
         let a = pick_appimage_asset(&r).unwrap();
@@ -291,9 +322,11 @@ mod tests {
         let r = Release {
             tag: "v1".into(),
             name: "".into(),
-            assets: vec![
-                Asset { name: "app.AppImage.zsync".into(), download_url: "u".into(), size: 1 },
-            ],
+            assets: vec![Asset {
+                name: "app.AppImage.zsync".into(),
+                download_url: "u".into(),
+                size: 1,
+            }],
         };
         assert!(pick_appimage_asset(&r).is_none());
     }

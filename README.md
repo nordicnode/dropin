@@ -67,7 +67,7 @@ One click later it's in your menu, and removing it later is just as easy:
 | `.tar.gz` / `.tar.xz` / `.zip` | Actually looks at what's inside. Real app? It gets installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken "install" |
 | `.flatpakref` / `.flatpak` | Hands it to `flatpak install --user` |
 | `.sh` / `.run` / `.bin` | Tells you it's an executable vendor script and won't run it until you explicitly say so |
-| `.exe` | Passes it to Wine if you've got it, tells you straight if you don't |
+| `.exe` / `.msi` | Full Wine integration: isolated prefix per app (like Lutris), guided Wine setup if missing, menu entry, tracked for clean removal |
 
 Detection goes by magic bytes, not file extensions. Rename a `.deb` to `.txt` and dropin still knows what it's looking at.
 

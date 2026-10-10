@@ -48,7 +48,8 @@ pub fn issuer_fingerprint(sig_path: &Path) -> Result<String> {
     let mut ppr = sequoia_openpgp::parse::PacketParser::from_bytes(&raw)
         .map_err(|e| Error::Unsupported(format!("could not parse signature: {e}")))?;
     while let sequoia_openpgp::parse::PacketParserResult::Some(pp) = ppr {
-        let (packet, next) = pp.next()
+        let (packet, next) = pp
+            .next()
             .map_err(|e| Error::Unsupported(format!("packet error: {e}")))?;
         ppr = next;
         if let sequoia_openpgp::packet::Packet::Signature(sig) = packet {

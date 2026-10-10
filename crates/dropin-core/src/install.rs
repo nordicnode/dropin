@@ -16,9 +16,7 @@ pub fn plan_for(src: &Path) -> Result<InstallPlan> {
         Format::Rpm => handlers::rpm::plan(src),
         Format::FlatpakRef | Format::FlatpakBundle => handlers::flatpak::plan(src),
         Format::Script => handlers::script::plan(src),
-        Format::WindowsExe => Err(Error::Refused(
-            "Windows executables need Wine — install Wine and run them directly for now".into(),
-        )),
+        Format::WindowsExe => handlers::wine::plan(src),
         Format::Unknown => Err(Error::Unsupported("unknown format".into())),
     }
 }
@@ -54,11 +52,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         Format::Rpm => handlers::rpm::install(src, opts)?,
         Format::FlatpakRef | Format::FlatpakBundle => handlers::flatpak::install(src, opts)?,
         Format::Script => handlers::script::install(src, opts)?,
-        Format::WindowsExe => {
-            return Err(Error::Refused(
-                "Windows executables need Wine — install Wine and run them directly for now".into(),
-            ))
-        }
+        Format::WindowsExe => handlers::wine::install(src, opts)?,
         Format::Unknown => return Err(Error::Unsupported("unknown format".into())),
     };
     let ledger = Ledger::open()?;
@@ -144,8 +138,11 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
     }
 
     if purge && !inst.external {
-        let remaining: Vec<crate::ledger::Install> =
-            ledger.list()?.into_iter().filter(|i| i.name != slug).collect();
+        let remaining: Vec<crate::ledger::Install> = ledger
+            .list()?
+            .into_iter()
+            .filter(|i| i.name != slug)
+            .collect();
         if crate::health::name_still_provided(&remaining, &inst) {
             println!(
                 "note: skipping leftover purge — '{}' is still provided by another install or system package",
@@ -177,6 +174,28 @@ pub fn list() -> Result<Vec<crate::ledger::Install>> {
 ///
 /// Finds the executable from the desktop entry (preferred) or the
 /// installed files, then spawns it detached.
+/// Split a desktop entry Exec line, respecting double quotes.
+fn split_exec(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for c in s.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            c if c.is_whitespace() && !in_quotes => {
+                if !cur.is_empty() {
+                    parts.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
 pub fn launch(name: &str) -> Result<String> {
     let slug = slugify(name);
     let ledger = Ledger::open()?;
@@ -184,24 +203,20 @@ pub fn launch(name: &str) -> Result<String> {
     let dirs = UserDirs::new();
 
     // Find the executable: prefer the desktop entry's Exec line.
-    let desktop = dirs
-        .desktop_entries
-        .join(format!("dropin-{slug}.desktop"));
+    let desktop = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
     let mut exe: Option<PathBuf> = None;
     let mut args: Vec<String> = Vec::new();
     if let Ok(text) = std::fs::read_to_string(&desktop) {
         for line in text.lines() {
             if let Some(rest) = line.strip_prefix("Exec=") {
-                let parts: Vec<&str> = rest.split_whitespace().collect();
+                let parts = split_exec(rest);
                 if !parts.is_empty() {
                     // Skip field codes (%f, %F, %u, %U, etc.).
-                    let clean: Vec<&str> = parts
-                        .into_iter()
-                        .filter(|p| !p.starts_with('%'))
-                        .collect();
+                    let clean: Vec<String> =
+                        parts.into_iter().filter(|p| !p.starts_with('%')).collect();
                     if let Some(e) = clean.first() {
                         exe = Some(PathBuf::from(e));
-                        args = clean[1..].iter().map(|s| s.to_string()).collect();
+                        args = clean[1..].to_vec();
                     }
                 }
                 break;
@@ -270,11 +285,7 @@ pub fn update(name: Option<&str>, all: bool) -> Result<Vec<UpdateReport>> {
     let targets: Vec<crate::ledger::Install> = match (name, all) {
         (Some(n), _) => vec![ledger.get(&slugify(n))?],
         (None, true) => ledger.list()?,
-        (None, false) => {
-            return Err(Error::Refused(
-                "specify an app name or pass --all".into(),
-            ))
-        }
+        (None, false) => return Err(Error::Refused("specify an app name or pass --all".into())),
     };
     Ok(targets.iter().map(update_one).collect())
 }
@@ -284,16 +295,28 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
     // Flatpak owns its updates entirely.
     if inst.format.starts_with("Flatpak") {
         let id = flatpak_id(inst);
-        return match crate::run("flatpak", &["update", "--user", "--noninteractive", "-y", &id]) {
+        return match crate::run(
+            "flatpak",
+            &["update", "--user", "--noninteractive", "-y", &id],
+        ) {
             Ok(out) => {
                 let msg = out.trim().to_string();
                 if msg.contains("Nothing to do") || msg.is_empty() {
-                    UpdateReport { name, status: UpdateStatus::UpToDate("flatpak: nothing to do".into()) }
+                    UpdateReport {
+                        name,
+                        status: UpdateStatus::UpToDate("flatpak: nothing to do".into()),
+                    }
                 } else {
-                    UpdateReport { name, status: UpdateStatus::Updated("flatpak updated".into()) }
+                    UpdateReport {
+                        name,
+                        status: UpdateStatus::Updated("flatpak updated".into()),
+                    }
                 }
             }
-            Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("flatpak update failed: {e}")) },
+            Err(e) => UpdateReport {
+                name,
+                status: UpdateStatus::Failed(format!("flatpak update failed: {e}")),
+            },
         };
     }
     // AppImage: an explicitly tracked GitHub repo wins; otherwise native
@@ -329,7 +352,9 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
             "system packages update via your package manager (`apt upgrade`, `dnf upgrade`)"
         }
         s if s.contains("archive") => "tarballs have no update channel — re-download upstream",
-        "installer script" => "vendor scripts have no update channel — download the new installer and run it",
+        "installer script" => {
+            "vendor scripts have no update channel — download the new installer and run it"
+        }
         _ => "no automated update source known — check upstream manually",
     };
     UpdateReport {
@@ -343,11 +368,7 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
 ///
 /// Generation layout: the delta is applied to a copy in a new version dir,
 /// then `active` is flipped. Legacy flat layout: in-place with snapshots.
-fn update_appimage(
-    inst: &crate::ledger::Install,
-    appimage: &str,
-    channel: &str,
-) -> UpdateReport {
+fn update_appimage(inst: &crate::ledger::Install, appimage: &str, channel: &str) -> UpdateReport {
     let name = inst.name.clone();
     let dirs = UserDirs::new();
     let slug = slugify(&inst.name);
@@ -358,7 +379,16 @@ fn update_appimage(
     let local_path = std::path::Path::new(appimage);
     let real_local: std::path::PathBuf = if local_path.is_symlink() {
         std::fs::read_link(local_path)
-            .map(|t| if t.is_absolute() { t } else { local_path.parent().unwrap_or(std::path::Path::new(".")).join(t) })
+            .map(|t| {
+                if t.is_absolute() {
+                    t
+                } else {
+                    local_path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join(t)
+                }
+            })
             .unwrap_or_else(|_| local_path.to_path_buf())
     } else {
         local_path.to_path_buf()
@@ -379,7 +409,9 @@ fn update_appimage(
                 status: UpdateStatus::Failed("could not create version directory".into()),
             };
         }
-        let file_name = local.file_name().unwrap_or_else(|| std::ffi::OsStr::new("app.AppImage"));
+        let file_name = local
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("app.AppImage"));
         let wp = vd.join(file_name);
         if std::fs::copy(local, &wp).is_err() {
             return UpdateReport {
@@ -413,7 +445,8 @@ fn update_appimage(
                     // Generation layout: flip `active` to the new version.
                     if in_generations {
                         let active = app_dir.join("active");
-                        if let Err(e) = crate::handlers::appimage::flip_symlink(&active, work_local) {
+                        if let Err(e) = crate::handlers::appimage::flip_symlink(&active, work_local)
+                        {
                             return UpdateReport {
                                 name,
                                 status: UpdateStatus::Failed(format!("could not activate: {e}")),
@@ -436,7 +469,9 @@ fn update_appimage(
                     if let Some(vd) = new_ver_dir {
                         std::fs::remove_dir_all(&vd).ok();
                     }
-                    eprintln!("dropin: native zsync update failed ({e}); trying appimageupdatetool");
+                    eprintln!(
+                        "dropin: native zsync update failed ({e}); trying appimageupdatetool"
+                    );
                 }
             }
         }
@@ -465,12 +500,21 @@ fn update_appimage(
         Ok(out) => {
             let msg = out.trim().to_string();
             if msg.contains("up to date") || msg.contains("nothing to do") {
-                UpdateReport { name, status: UpdateStatus::UpToDate("already current".into()) }
+                UpdateReport {
+                    name,
+                    status: UpdateStatus::UpToDate("already current".into()),
+                }
             } else {
-                UpdateReport { name, status: UpdateStatus::Updated("updated in place".into()) }
+                UpdateReport {
+                    name,
+                    status: UpdateStatus::Updated("updated in place".into()),
+                }
             }
         }
-        Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("appimageupdatetool failed: {e}")) },
+        Err(e) => UpdateReport {
+            name,
+            status: UpdateStatus::Failed(format!("appimageupdatetool failed: {e}")),
+        },
     }
 }
 
@@ -514,13 +558,15 @@ pub fn rollback(name: &str) -> Result<String> {
             // Find what `active` currently points at, go to the previous.
             let active = app_dir.join("active");
             let cur_target = std::fs::read_link(&active).ok();
-            let cur_ver = cur_target.as_ref()
+            let cur_ver = cur_target
+                .as_ref()
                 .and_then(|t| t.parent())
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str());
-            let idx = cur_ver.and_then(|v| vers.iter().position(|p| {
-                p.file_name().and_then(|n| n.to_str()) == Some(v)
-            }));
+            let idx = cur_ver.and_then(|v| {
+                vers.iter()
+                    .position(|p| p.file_name().and_then(|n| n.to_str()) == Some(v))
+            });
             let prev_idx = match idx {
                 Some(i) if i > 0 => i - 1,
                 Some(_) => {
@@ -538,12 +584,22 @@ pub fn rollback(name: &str) -> Result<String> {
                 .flatten()
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .find(|p| p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("appimage")).unwrap_or(false));
+                .find(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("appimage"))
+                        .unwrap_or(false)
+                });
             let Some(prev_img) = prev_img else {
-                return Err(Error::NotInstalled("previous generation has no AppImage".to_string()));
+                return Err(Error::NotInstalled(
+                    "previous generation has no AppImage".to_string(),
+                ));
             };
             crate::handlers::appimage::flip_symlink(&active, &prev_img)?;
-            let ver_name = prev_ver.file_name().and_then(|n| n.to_str()).unwrap_or("previous");
+            let ver_name = prev_ver
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("previous");
             ledger.clear_version(&slug).ok();
             return Ok(format!("rolled back to generation {ver_name}"));
         } else {
@@ -564,7 +620,10 @@ pub fn rollback(name: &str) -> Result<String> {
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("bak"))
         .collect();
     if snaps.is_empty() {
-        return Err(Error::NotInstalled(format!("no snapshots for {}", inst.name)));
+        return Err(Error::NotInstalled(format!(
+            "no snapshots for {}",
+            inst.name
+        )));
     }
     snaps.sort();
     let latest = snaps.pop().unwrap();
@@ -578,22 +637,28 @@ pub fn rollback(name: &str) -> Result<String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let file_name = local.file_name().and_then(|n| n.to_str()).unwrap_or("appimage");
+    let file_name = local
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("appimage");
     let current_bak = snap_dir.join(format!("{file_name}-{nanos}.bak"));
     if local.exists() {
         std::fs::rename(local, &current_bak)?;
     }
     std::fs::rename(&latest, local).map_err(|e| {
         std::fs::rename(&current_bak, local).ok();
-        Error::Io(std::io::Error::other(
-            format!("restoring snapshot: {e} (current file preserved)"),
-        ))
+        Error::Io(std::io::Error::other(format!(
+            "restoring snapshot: {e} (current file preserved)"
+        )))
     })?;
     prune_snapshots(&snap_dir, 2);
     ledger.clear_version(&slug).ok();
     Ok(format!(
         "rolled back to {}",
-        latest.file_name().and_then(|n| n.to_str()).unwrap_or("snapshot")
+        latest
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("snapshot")
     ))
 }
 
@@ -688,14 +753,14 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
     let dirs = UserDirs::new();
 
     let (release, _cached) = match crate::github::latest_release(repo, &dirs.data) {
-            Ok(r) => r,
-            Err(e) => {
-                return UpdateReport {
-                    name,
-                    status: UpdateStatus::Failed(format!("GitHub release check failed: {e}")),
-                }
+        Ok(r) => r,
+        Err(e) => {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Failed(format!("GitHub release check failed: {e}")),
             }
-        };
+        }
+    };
 
     if !crate::github::is_newer(inst.version.as_deref(), &release.tag) {
         return UpdateReport {
@@ -798,7 +863,9 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
         if let Err(e) = migrate_to_generations(inst, &dirs) {
             return UpdateReport {
                 name,
-                status: UpdateStatus::Failed(format!("could not migrate to generation layout: {e}")),
+                status: UpdateStatus::Failed(format!(
+                    "could not migrate to generation layout: {e}"
+                )),
             };
         }
     }
@@ -873,9 +940,19 @@ fn sanitize_version(tag: &str) -> String {
         .trim()
         .trim_start_matches(['v', 'V'])
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    if s.is_empty() { "unknown".to_string() } else { s }
+    if s.is_empty() {
+        "unknown".to_string()
+    } else {
+        s
+    }
 }
 
 /// Migrate a flat-layout install (~/Applications/<file>.AppImage) into
@@ -890,11 +967,16 @@ fn migrate_to_generations(inst: &crate::ledger::Install, dirs: &UserDirs) -> cra
         .find(|p| p.to_lowercase().ends_with(".appimage"))
         .ok_or_else(|| crate::Error::NotInstalled(format!("{} has no AppImage file", inst.name)))?;
     let cur_path = std::path::Path::new(current);
-    let ver = inst.version.clone().unwrap_or_else(|| "unknown".to_string());
+    let ver = inst
+        .version
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
     let ver = sanitize_version(&ver);
     let ver_dir = app_dir.join(&ver);
     std::fs::create_dir_all(&ver_dir)?;
-    let file_name = cur_path.file_name().ok_or_else(|| crate::Error::NotInstalled("bad file name".into()))?;
+    let file_name = cur_path
+        .file_name()
+        .ok_or_else(|| crate::Error::NotInstalled("bad file name".into()))?;
     let new_path = ver_dir.join(file_name);
     std::fs::rename(cur_path, &new_path)?;
     let active = app_dir.join("active");
@@ -989,7 +1071,11 @@ pub fn doctor() -> Vec<(String, bool, String)> {
             have("update-desktop-database"),
             "menu refresh".into(),
         ),
-        ("wine".into(), have("wine"), ".exe handoff (optional)".into()),
+        (
+            "wine".into(),
+            have("wine"),
+            ".exe installer support (optional)".into(),
+        ),
         (
             "appimageupdatetool".into(),
             have("appimageupdatetool"),

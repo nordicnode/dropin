@@ -50,7 +50,11 @@ pub struct HashLengths {
 impl HashLengths {
     /// What a header without the line means: the untruncated checksums
     /// zsync used before the field existed.
-    pub const DEFAULT: Self = Self { seq_matches: 1, rsum_bytes: 4, checksum_bytes: 16 };
+    pub const DEFAULT: Self = Self {
+        seq_matches: 1,
+        rsum_bytes: 4,
+        checksum_bytes: 16,
+    };
 
     /// Bytes one block occupies in the table.
     pub fn entry_size(self) -> usize {
@@ -94,7 +98,11 @@ impl HashLengths {
         {
             return Err(format!("{value:?} is not a usable Hash-Lengths line"));
         }
-        Ok(Self { seq_matches, rsum_bytes, checksum_bytes })
+        Ok(Self {
+            seq_matches,
+            rsum_bytes,
+            checksum_bytes,
+        })
     }
 }
 
@@ -159,7 +167,9 @@ pub fn fetch_header(zsync_url: &str) -> Result<Header> {
         RangeBody::Partial(b) | RangeBody::Full(b) => b,
     };
     if bytes.len() >= HEADER_REQUEST && !has_terminator(bytes) {
-        return Err(Error::Zsync(format!("header of {zsync_url} did not fit in one request")));
+        return Err(Error::Zsync(format!(
+            "header of {zsync_url} did not fit in one request"
+        )));
     }
     parse_header(bytes).map_err(|r| Error::Zsync(format!("{zsync_url}: {r}")))
 }
@@ -173,8 +183,8 @@ pub fn fetch_control(zsync_url: &str) -> Result<ControlFile> {
 
 /// Parse only the header; the caller may not have the whole file.
 pub fn parse_header(bytes: &[u8]) -> std::result::Result<Header, String> {
-    let (end, _) = terminator(bytes)
-        .ok_or_else(|| "header not terminated by a blank line".to_string())?;
+    let (end, _) =
+        terminator(bytes).ok_or_else(|| "header not terminated by a blank line".to_string())?;
     let text = String::from_utf8_lossy(&bytes[..end]);
 
     let mut header = Header {
@@ -206,11 +216,16 @@ pub fn parse_header(bytes: &[u8]) -> std::result::Result<Header, String> {
             // split_once already split on the FIRST colon, so URLs survive.
             "url" => header.url = Some(value.to_string()),
             "length" => {
-                length = Some(value.parse::<u64>().map_err(|_| format!("{value:?} is not a length"))?);
+                length = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| format!("{value:?} is not a length"))?,
+                );
             }
             "blocksize" => {
-                let size =
-                    value.parse::<u64>().map_err(|_| format!("{value:?} is not a block size"))?;
+                let size = value
+                    .parse::<u64>()
+                    .map_err(|_| format!("{value:?} is not a block size"))?;
                 if size == 0 || !size.is_power_of_two() {
                     return Err(format!("{size} is not a usable block size"));
                 }
@@ -230,7 +245,9 @@ pub fn parse_control(bytes: &[u8]) -> std::result::Result<ControlFile, String> {
     let (end, skip) =
         terminator(bytes).ok_or_else(|| "header not terminated by a blank line".to_string())?;
 
-    let blocksize = header.blocksize.ok_or_else(|| "header carries no Blocksize".to_string())?;
+    let blocksize = header
+        .blocksize
+        .ok_or_else(|| "header carries no Blocksize".to_string())?;
     if header.length == 0 {
         return Err("header says the complete file is empty".to_string());
     }
@@ -265,10 +282,18 @@ pub fn parse_control(bytes: &[u8]) -> std::result::Result<ControlFile, String> {
         rsum[4 - weak.len()..].copy_from_slice(weak);
         let mut checksum = [0u8; 16];
         checksum[..strong.len()].copy_from_slice(strong);
-        blocks.push(BlockSum { rsum: u32::from_be_bytes(rsum), checksum });
+        blocks.push(BlockSum {
+            rsum: u32::from_be_bytes(rsum),
+            checksum,
+        });
     }
 
-    Ok(ControlFile { header, blocksize, hash_lengths, blocks })
+    Ok(ControlFile {
+        header,
+        blocksize,
+        hash_lengths,
+        blocks,
+    })
 }
 
 fn has_terminator(bytes: &[u8]) -> bool {
@@ -278,8 +303,14 @@ fn has_terminator(bytes: &[u8]) -> bool {
 /// Start and length of the blank line ending the header. Binary table bytes
 /// may contain `\n\n`, so whichever of `\n\n` / `\r\n\r\n` comes first wins.
 fn terminator(bytes: &[u8]) -> Option<(usize, usize)> {
-    let lf = bytes.windows(2).position(|w| w == b"\n\n").map(|at| (at, 2));
-    let crlf = bytes.windows(4).position(|w| w == b"\r\n\r\n").map(|at| (at, 4));
+    let lf = bytes
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|at| (at, 2));
+    let crlf = bytes
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|at| (at, 4));
     match (lf, crlf) {
         (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
         (found, _) => found.or(crlf),
@@ -305,7 +336,11 @@ mod tests {
         assert_eq!(h.blocksize, Some(2048));
         assert_eq!(
             h.hash_lengths,
-            HashLengths { seq_matches: 2, rsum_bytes: 2, checksum_bytes: 4 }
+            HashLengths {
+                seq_matches: 2,
+                rsum_bytes: 2,
+                checksum_bytes: 4
+            }
         );
         assert_eq!(h.url.as_deref(), Some("app-x86_64.AppImage"));
         assert_eq!(
@@ -354,8 +389,15 @@ mod tests {
 
     #[test]
     fn truncate_masks_per_rsum_bytes() {
-        let r = Rsum { a: 0xabcd, b: 0x1234 };
-        let l = |wb| HashLengths { seq_matches: 1, rsum_bytes: wb, checksum_bytes: 4 };
+        let r = Rsum {
+            a: 0xabcd,
+            b: 0x1234,
+        };
+        let l = |wb| HashLengths {
+            seq_matches: 1,
+            rsum_bytes: wb,
+            checksum_bytes: 4,
+        };
         assert_eq!(l(4).truncate(r), 0xabcd_1234);
         assert_eq!(l(3).truncate(r), 0x00cd_1234);
         assert_eq!(l(2).truncate(r), 0x0000_1234);

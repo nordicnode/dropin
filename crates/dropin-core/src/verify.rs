@@ -63,7 +63,9 @@ pub fn verify(file: &Path, sha256: &str) -> Verification {
                 .to_string_lossy()
                 .into_owned();
             if expected.eq_ignore_ascii_case(sha256) {
-                return Verification::Verified { checksum_file: from };
+                return Verification::Verified {
+                    checksum_file: from,
+                };
             }
             return Verification::Mismatch {
                 expected,
@@ -129,8 +131,7 @@ mod tests {
         p
     }
 
-    const HASH_OF_HELLO: &str =
-        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    const HASH_OF_HELLO: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 
     #[test]
     fn verifies_per_file_companion() {
@@ -153,7 +154,10 @@ mod tests {
             "SHA256SUMS",
             format!("{HASH_OF_HELLO} *tool.AppImage\n").as_bytes(),
         );
-        assert!(matches!(verify(&f, HASH_OF_HELLO), Verification::Verified { .. }));
+        assert!(matches!(
+            verify(&f, HASH_OF_HELLO),
+            Verification::Verified { .. }
+        ));
         let _ = std::fs::remove_dir_all(&d);
     }
 

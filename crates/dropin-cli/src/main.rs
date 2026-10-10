@@ -5,9 +5,12 @@ use dropin_core::handlers::InstallOptions;
 use dropin_core::{detect, install};
 use std::path::PathBuf;
 
-
 #[derive(Parser)]
-#[command(name = "dropin", version, about = "Download it. Double-click it. Done.")]
+#[command(
+    name = "dropin",
+    version,
+    about = "Download it. Double-click it. Done."
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -125,7 +128,11 @@ fn run() -> dropin_core::Result<()> {
             println!(
                 "format:  {} {}",
                 d.format.label(),
-                if d.by_magic { "(magic bytes)" } else { "(extension)" }
+                if d.by_magic {
+                    "(magic bytes)"
+                } else {
+                    "(extension)"
+                }
             );
             println!("app:     {}", plan.app_name);
             if let Some(v) = plan.version {
@@ -294,28 +301,30 @@ fn run() -> dropin_core::Result<()> {
         }
         Cmd::Export { file } => {
             let apps = install::list()?;
-            let json = serde_json::to_string_pretty(&apps).map_err(|e| {
-                dropin_core::Error::Unsupported(format!("couldn't export: {e}"))
-            })?;
+            let json = serde_json::to_string_pretty(&apps)
+                .map_err(|e| dropin_core::Error::Unsupported(format!("couldn't export: {e}")))?;
             std::fs::write(&file, json)?;
             println!("Exported {} apps to {}.", apps.len(), file.display());
             Ok(())
         }
         Cmd::Import { file } => {
             let json = std::fs::read_to_string(&file)?;
-            let apps: Vec<dropin_core::ledger::Install> = serde_json::from_str(&json).map_err(|e| {
-                dropin_core::Error::Unsupported(format!("couldn't import: {e}"))
-            })?;
+            let apps: Vec<dropin_core::ledger::Install> = serde_json::from_str(&json)
+                .map_err(|e| dropin_core::Error::Unsupported(format!("couldn't import: {e}")))?;
             println!(
                 "Found {} apps in {}. Reinstall them from their original files to restore.",
                 apps.len(),
                 file.display()
             );
             for app in &apps {
-                println!("  {} {} ({})", app.name, app.version.as_deref().unwrap_or(""), app.format);
+                println!(
+                    "  {} {} ({})",
+                    app.name,
+                    app.version.as_deref().unwrap_or(""),
+                    app.format
+                );
             }
             Ok(())
         }
     }
 }
-

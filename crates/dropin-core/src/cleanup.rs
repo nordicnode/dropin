@@ -295,8 +295,13 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert!(!dir.exists(), "original moved away");
         assert_eq!(trashed.len(), 1);
-        assert!(trashed[0].join("blob").exists(), "contents preserved in trash");
-        assert!(home.join(".local/share/Trash/info/myapp.trashinfo").exists());
+        assert!(
+            trashed[0].join("blob").exists(),
+            "contents preserved in trash"
+        );
+        assert!(home
+            .join(".local/share/Trash/info/myapp.trashinfo")
+            .exists());
         let _ = std::fs::remove_dir_all(&home);
     }
 

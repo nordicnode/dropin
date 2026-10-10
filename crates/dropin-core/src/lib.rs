@@ -6,6 +6,7 @@
 pub mod cleanup;
 pub mod desktop;
 pub mod detect;
+pub mod github;
 pub mod handlers;
 pub mod health;
 pub mod install;
@@ -15,7 +16,6 @@ pub mod settings;
 pub mod signatures;
 pub mod verify;
 pub mod zsync;
-pub mod github;
 
 /// Test-only helpers for tests that redirect HOME/DROPIN_HOME.
 ///
@@ -86,12 +86,12 @@ pub fn home_dir() -> PathBuf {
 
 /// XDG-ish user locations dropin manages.
 pub struct UserDirs {
-    pub applications: PathBuf, // ~/Applications (AppImages live here)
-    pub opt: PathBuf,          // ~/.local/opt/<app>
-    pub bin: PathBuf,          // ~/.local/bin
+    pub applications: PathBuf,    // ~/Applications (AppImages live here)
+    pub opt: PathBuf,             // ~/.local/opt/<app>
+    pub bin: PathBuf,             // ~/.local/bin
     pub desktop_entries: PathBuf, // ~/.local/share/applications
-    pub icons: PathBuf,        // ~/.local/share/icons/hicolor/256x256/apps
-    pub data: PathBuf,         // ~/.local/share/dropin (ledger lives here)
+    pub icons: PathBuf,           // ~/.local/share/icons/hicolor/256x256/apps
+    pub data: PathBuf,            // ~/.local/share/dropin (ledger lives here)
 }
 
 impl UserDirs {
@@ -167,10 +167,21 @@ pub fn clean_name(stem: &str) -> String {
     // Repeatedly strip trailing version/arch tokens.
     loop {
         let lower = s.to_lowercase();
-        let cut = ["-x86_64", "-amd64", "-aarch64", "-arm64", "_x86_64", "_amd64",
-                   "-x64", "-linux", "-gnu", ".x86_64", "-portable"]
-            .iter()
-            .find_map(|tok| lower.strip_suffix(tok).map(|_| s.len() - tok.len()));
+        let cut = [
+            "-x86_64",
+            "-amd64",
+            "-aarch64",
+            "-arm64",
+            "_x86_64",
+            "_amd64",
+            "-x64",
+            "-linux",
+            "-gnu",
+            ".x86_64",
+            "-portable",
+        ]
+        .iter()
+        .find_map(|tok| lower.strip_suffix(tok).map(|_| s.len() - tok.len()));
         // Also strip trailing version numbers like -1.2.3, _2.0, v3.1
         let ver_cut = {
             let bytes = s.as_bytes();
@@ -178,10 +189,20 @@ pub fn clean_name(stem: &str) -> String {
             while i > 0 && (bytes[i - 1].is_ascii_digit() || bytes[i - 1] == b'.') {
                 i -= 1;
             }
-            if i < bytes.len() && i > 0 && (bytes[i - 1] == b'-' || bytes[i - 1] == b'_' || bytes[i-1] == b'v' || bytes[i-1] == b'V') {
+            if i < bytes.len()
+                && i > 0
+                && (bytes[i - 1] == b'-'
+                    || bytes[i - 1] == b'_'
+                    || bytes[i - 1] == b'v'
+                    || bytes[i - 1] == b'V')
+            {
                 // make sure there is at least one digit in the stripped part
                 let tail = &s[i..];
-                if tail.chars().any(|c| c.is_ascii_digit()) { Some(i - 1) } else { None }
+                if tail.chars().any(|c| c.is_ascii_digit()) {
+                    Some(i - 1)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -198,8 +219,7 @@ pub fn clean_name(stem: &str) -> String {
         }
     }
     // "app-1.2.3" edge: the loop above handles it; final tidy.
-    s.trim_end_matches(['-', '_', '.'])
-        .to_string()
+    s.trim_end_matches(['-', '_', '.']).to_string()
 }
 
 /// File stem without the final extension: "foo-1.0.tar" for "foo-1.0.tar.gz".
@@ -209,7 +229,9 @@ pub fn stem_of(path: &Path) -> String {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     // Strip compound archive extensions first.
-    for ext in [".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.zst"] {
+    for ext in [
+        ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.zst",
+    ] {
         if let Some(s) = name.strip_suffix(ext) {
             return s.to_string();
         }

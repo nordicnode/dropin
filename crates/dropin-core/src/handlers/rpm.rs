@@ -68,7 +68,9 @@ fn parse_header(data: &[u8], pos: usize) -> Result<(Vec<IndexEntry>, usize, usiz
 }
 
 fn header_string(data: &[u8], entries: &[IndexEntry], store: usize, tag: u32) -> Option<String> {
-    let e = entries.iter().find(|e| e.tag == tag && e.typ == TYPE_STRING)?;
+    let e = entries
+        .iter()
+        .find(|e| e.tag == tag && e.typ == TYPE_STRING)?;
     let start = store + e.offset as usize;
     let bytes = data.get(start..)?;
     let len = bytes.iter().position(|&b| b == 0)?;
@@ -132,7 +134,9 @@ fn payload_bytes(path: &Path, meta: &RpmMeta) -> Result<Vec<u8>> {
                 .map_err(|e| Error::Command(format!("{tool} failed: {e}")))?;
             let _ = std::fs::remove_file(&tmp);
             if !out.status.success() {
-                return Err(Error::Command(format!("{tool} could not decompress payload")));
+                return Err(Error::Command(format!(
+                    "{tool} could not decompress payload"
+                )));
             }
             Ok(out.stdout)
         }
@@ -182,8 +186,7 @@ fn extract_cpio(payload: &[u8], dest: &Path) -> Result<()> {
             if pos + filesize > payload.len() {
                 return Err(Error::Unsupported("truncated cpio data".into()));
             }
-            let link_target =
-                std::str::from_utf8(&payload[pos..pos + filesize]).unwrap_or("");
+            let link_target = std::str::from_utf8(&payload[pos..pos + filesize]).unwrap_or("");
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -316,9 +319,13 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 }
 
 fn install_system(src: &Path) -> Result<InstallOutcome> {
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("fedora") || os_release.contains("rhel") {
+    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("fedora")
+        || os_release.contains("rhel")
+    {
         ("pkexec", vec!["dnf", "install", "-y", s])
     } else if os_release.contains("arch") {
         ("pkexec", vec!["pacman", "-U", "--noconfirm", s])
@@ -367,7 +374,17 @@ mod tests {
         let mut entry = |name: &str, mode: u32, data: &[u8]| {
             let mut h = String::from("070701");
             let fields: [u32; 13] = [
-                1, mode, 0, 0, 1, 0, data.len() as u32, 0, 0, 0, 0,
+                1,
+                mode,
+                0,
+                0,
+                1,
+                0,
+                data.len() as u32,
+                0,
+                0,
+                0,
+                0,
                 name.len() as u32 + 1,
                 0,
             ];
@@ -489,7 +506,9 @@ mod tests {
         assert!(bin.exists());
         let mode = std::fs::metadata(&bin).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o755);
-        assert!(dest.join("usr/share/applications/demotool2.desktop").exists());
+        assert!(dest
+            .join("usr/share/applications/demotool2.desktop")
+            .exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

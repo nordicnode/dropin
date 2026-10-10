@@ -8,6 +8,7 @@ pub mod flatpak;
 pub mod rpm;
 pub mod script;
 pub mod tarball;
+pub mod wine;
 
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -54,7 +55,9 @@ pub struct InstallOutcome {
 pub fn sha256_of(path: &Path) -> Result<String> {
     let out = crate::run(
         "sha256sum",
-        &[path.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?],
+        &[path
+            .to_str()
+            .ok_or_else(|| Error::Unsupported("bad path".into()))?],
     )?;
     Ok(out.split_whitespace().next().unwrap_or("").to_string())
 }

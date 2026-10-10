@@ -79,11 +79,16 @@ pub fn resolve_zsync_url(update_info: &str) -> Result<Option<String>> {
 /// Resolve `gh-releases-zsync|owner|repo|tag|pattern` to a `.zsync` asset URL.
 fn resolve_gh_zsync(rest: &str) -> Result<Option<String>> {
     let mut parts = rest.split('|');
-    let (owner, repo, tag, pattern) =
-        match (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(o), Some(r), Some(t), Some(p), None) => (o.trim(), r.trim(), t.trim(), p.trim()),
-            _ => return Ok(None),
-        };
+    let (owner, repo, tag, pattern) = match (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) {
+        (Some(o), Some(r), Some(t), Some(p), None) => (o.trim(), r.trim(), t.trim(), p.trim()),
+        _ => return Ok(None),
+    };
     if owner.is_empty() || repo.is_empty() || pattern.is_empty() {
         return Ok(None);
     }
@@ -95,10 +100,14 @@ fn resolve_gh_zsync(rest: &str) -> Result<Option<String>> {
     };
     let body = fetch::get_all(&api_url, 4 * 1024 * 1024)
         .map_err(|e| Error::Zsync(format!("GitHub release lookup failed: {e}")))?;
-    let release: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| Error::Zsync(format!("bad GitHub response: {e}")))?;
+    let release: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|e| Error::Zsync(format!("bad GitHub response: {e}")))?;
 
-    let assets = release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    let assets = release
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
     // Prefer an exact (modulo wildcards) match; the pattern usually ends in
     // `.zsync` already.
     for asset in &assets {
@@ -157,14 +166,21 @@ pub fn check(local: &Path, update_info: &str) -> Result<Option<UpdateCheck>> {
     let payload_url = match &header.url {
         Some(u) => join_url(&zsync_url, u),
         None => {
-            return Err(Error::Zsync(format!("{zsync_url}: header names no payload URL")));
+            return Err(Error::Zsync(format!(
+                "{zsync_url}: header names no payload URL"
+            )));
         }
     };
     let up_to_date = match &header.sha1 {
         Some(want) => sha1_file(local).map(|got| got == *want).unwrap_or(false),
         None => false,
     };
-    Ok(Some(UpdateCheck { zsync_url, payload_url, header, up_to_date }))
+    Ok(Some(UpdateCheck {
+        zsync_url,
+        payload_url,
+        header,
+        up_to_date,
+    }))
 }
 
 /// Apply a checked update: delta-download, verify, snapshot, swap.
@@ -181,11 +197,15 @@ pub fn apply(
     let control = fetch_control(&check.zsync_url)?;
     let length = control.header.length;
     if length > MAX_PAYLOAD {
-        return Err(Error::Zsync(format!("payload claims {length} bytes; refusing")));
+        return Err(Error::Zsync(format!(
+            "payload claims {length} bytes; refusing"
+        )));
     }
-    let want_sha1 = control.header.sha1.clone().ok_or_else(|| {
-        Error::Zsync(format!("{}: header carries no SHA-1", check.zsync_url))
-    })?;
+    let want_sha1 = control
+        .header
+        .sha1
+        .clone()
+        .ok_or_else(|| Error::Zsync(format!("{}: header carries no SHA-1", check.zsync_url)))?;
 
     // Already current? Belt and braces: the check compared SHA-1 already,
     // but re-verify cheaply via a full block scan result.
@@ -219,7 +239,8 @@ pub fn apply(
         .truncate(true)
         .open(&tmp)
         .map_err(|e| Error::Zsync(format!("creating {}: {e}", tmp.display())))?;
-    out.set_len(length).map_err(|e| Error::Zsync(e.to_string()))?;
+    out.set_len(length)
+        .map_err(|e| Error::Zsync(e.to_string()))?;
 
     // 1. Copy every block the local file already holds.
     {
@@ -227,17 +248,23 @@ pub fn apply(
         let bs = control.blocksize;
         let mut buf = vec![0u8; bs.min(1024 * 1024) as usize];
         for block in 0..total_blocks {
-            let Some(off) = map.offset_of(block) else { continue };
+            let Some(off) = map.offset_of(block) else {
+                continue;
+            };
             let pos = block as u64 * bs;
             // The final block may be short; copy only real bytes.
             let want = ((length - pos).min(bs)) as usize;
-            src.seek(SeekFrom::Start(off)).map_err(|e| Error::Zsync(e.to_string()))?;
-            out.seek(SeekFrom::Start(pos)).map_err(|e| Error::Zsync(e.to_string()))?;
+            src.seek(SeekFrom::Start(off))
+                .map_err(|e| Error::Zsync(e.to_string()))?;
+            out.seek(SeekFrom::Start(pos))
+                .map_err(|e| Error::Zsync(e.to_string()))?;
             let mut left = want;
             while left > 0 {
                 let n = buf.len().min(left);
-                src.read_exact(&mut buf[..n]).map_err(|e| Error::Zsync(e.to_string()))?;
-                out.write_all(&buf[..n]).map_err(|e| Error::Zsync(e.to_string()))?;
+                src.read_exact(&mut buf[..n])
+                    .map_err(|e| Error::Zsync(e.to_string()))?;
+                out.write_all(&buf[..n])
+                    .map_err(|e| Error::Zsync(e.to_string()))?;
                 left -= n;
             }
         }
@@ -250,7 +277,8 @@ pub fn apply(
         let len = end - start;
         let mut written: u64 = 0;
         fetch::get_range_into(&check.payload_url, *start, len, |chunk| {
-            out.seek(SeekFrom::Start(*start + written)).map_err(|e| e.to_string())?;
+            out.seek(SeekFrom::Start(*start + written))
+                .map_err(|e| e.to_string())?;
             out.write_all(chunk).map_err(|e| e.to_string())?;
             written += chunk.len() as u64;
             Ok(())
@@ -276,7 +304,10 @@ pub fn apply(
         .map_err(|e| Error::Zsync(format!("creating snapshot dir: {e}")))?;
     let backup = snapshot_to.join(format!(
         "{}-{}.bak",
-        local.file_name().and_then(|n| n.to_str()).unwrap_or("appimage"),
+        local
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("appimage"),
         chrono_stamp()
     ));
     std::fs::rename(local, &backup)
@@ -284,7 +315,9 @@ pub fn apply(
     if let Err(e) = std::fs::rename(&tmp, local) {
         // Try to put the old file back; report both failures honestly.
         std::fs::rename(&backup, local).ok();
-        return Err(Error::Zsync(format!("activating update: {e} (old file restored)")));
+        return Err(Error::Zsync(format!(
+            "activating update: {e} (old file restored)"
+        )));
     }
     // Keep the new file executable, as AppImages must be.
     #[cfg(unix)]
@@ -369,7 +402,10 @@ fn chrono_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     // Nanoseconds: two snapshots in the same second must not overwrite
     // each other.
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     format!("{nanos}")
 }
 
@@ -381,7 +417,10 @@ mod tests {
     fn wildcard_matching() {
         assert!(wildcard_match("*.zsync", "app-x86_64.AppImage.zsync"));
         assert!(wildcard_match("app-*.zsync", "app-x86_64.AppImage.zsync"));
-        assert!(!wildcard_match("app-*.zsync", "other-x86_64.AppImage.zsync"));
+        assert!(!wildcard_match(
+            "app-*.zsync",
+            "other-x86_64.AppImage.zsync"
+        ));
         assert!(wildcard_match("*", "anything"));
         assert!(wildcard_match("exact", "exact"));
         assert!(!wildcard_match("exact", "exact2"));
@@ -403,7 +442,10 @@ mod tests {
 
     #[test]
     fn rejects_malformed_gh_channel() {
-        assert_eq!(resolve_zsync_url("gh-releases-zsync|only-two|parts").unwrap(), None);
+        assert_eq!(
+            resolve_zsync_url("gh-releases-zsync|only-two|parts").unwrap(),
+            None
+        );
     }
 
     #[test]

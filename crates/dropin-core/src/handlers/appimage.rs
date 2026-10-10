@@ -12,7 +12,10 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
         app_name: d.name_hint.clone(),
         version: None,
         steps: vec![
-            format!("Move to ~/Applications/{}", src.file_name().unwrap().to_string_lossy()),
+            format!(
+                "Move to ~/Applications/{}",
+                src.file_name().unwrap().to_string_lossy()
+            ),
             "Make executable".into(),
             "Extract embedded icon and menu entry".into(),
             "Add to your application menu".into(),
@@ -57,8 +60,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let mut version: Option<String> = None;
     // Quick metadata peek for the version (full extraction happens after).
     // For now, try the filename; the embedded version refines it below.
-    version = version_from_filename(&file_name.to_string_lossy())
-        .or(version);
+    version = version_from_filename(&file_name.to_string_lossy()).or(version);
     let ver = version.clone().unwrap_or_else(|| "unknown".to_string());
     let ver_dir = app_dir.join(&ver);
     let dest = ver_dir.join(file_name);
@@ -126,7 +128,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             let _ = std::fs::remove_dir_all(meta.scratch);
         }
         Err(e) => {
-            eprintln!("warning: could not extract AppImage metadata ({e}); using a generic menu entry");
+            eprintln!(
+                "warning: could not extract AppImage metadata ({e}); using a generic menu entry"
+            );
             let (_, mut extra) = generate_entry(&d.name_hint, &slug, &active)?;
             extra_paths.append(&mut extra);
         }
@@ -167,16 +171,17 @@ fn preflight_arch(file_name: &str) -> Result<()> {
 
     // What arch does the filename claim? Order matters: check x86_64
     // before the bare "x86" so the substring doesn't false-positive.
-    let claims = if lower.contains("x86_64") || lower.contains("amd64") || word_contains(&lower, "x64") {
-        Some("x86_64")
-    } else if lower.contains("aarch64") || lower.contains("arm64") {
-        Some("aarch64")
-    } else if lower.contains("i686") || lower.contains("i386") || lower.contains("x86") {
-        // Reached only when "x86_64" wasn't found, so bare "x86" means 32-bit.
-        Some("i686")
-    } else {
-        None
-    };
+    let claims =
+        if lower.contains("x86_64") || lower.contains("amd64") || word_contains(&lower, "x64") {
+            Some("x86_64")
+        } else if lower.contains("aarch64") || lower.contains("arm64") {
+            Some("aarch64")
+        } else if lower.contains("i686") || lower.contains("i386") || lower.contains("x86") {
+            // Reached only when "x86_64" wasn't found, so bare "x86" means 32-bit.
+            Some("i686")
+        } else {
+            None
+        };
 
     match claims {
         Some(claimed) if claimed != arch => Err(Error::Refused(format!(
@@ -201,9 +206,8 @@ fn preflight_disk(dir: &Path, need: u64) -> Result<()> {
     {
         use std::ffi::CString;
         use std::mem::MaybeUninit;
-        let cpath = CString::new(dir.to_string_lossy().as_bytes()).map_err(|_| {
-            Error::Refused("could not check disk space".to_string())
-        })?;
+        let cpath = CString::new(dir.to_string_lossy().as_bytes())
+            .map_err(|_| Error::Refused("could not check disk space".to_string()))?;
         let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
         // SAFETY: statvfs writes to the provided struct.
         let rc = unsafe { libc::statvfs(cpath.as_ptr(), stat.as_mut_ptr()) };
@@ -230,7 +234,11 @@ fn human_size(n: u64) -> String {
         v /= 1024.0;
         u += 1;
     }
-    if u == 0 { format!("{n} B") } else { format!("{v:.1} {}", UNITS[u]) }
+    if u == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
 }
 
 /// Atomically point `link` at `target` via rename (POSIX atomic).
@@ -263,7 +271,11 @@ fn version_from_filename(name: &str) -> Option<String> {
     let mut cur = String::new();
     let flush = |cur: &mut String, best: &mut Option<String>| {
         if cur.chars().filter(|&c| c == '.').count() >= 1
-            && cur.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+            && cur
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
             && cur.len() > best.as_ref().map(|b| b.len()).unwrap_or(0)
         {
             *best = Some(cur.clone());
@@ -297,10 +309,7 @@ fn extract_metadata(appimage: &Path) -> Result<ExtractedMeta> {
     let scratch = std::env::temp_dir().join(format!(
         "dropin-ai-{}-{}",
         std::process::id(),
-        appimage
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
+        appimage.file_name().unwrap_or_default().to_string_lossy()
     ));
     if scratch.exists() {
         std::fs::remove_dir_all(&scratch)?;
@@ -330,16 +339,17 @@ fn extract_metadata(appimage: &Path) -> Result<ExtractedMeta> {
         .map_err(|e| Error::Command(format!("--appimage-extract failed: {e}")))?;
     if !status.status.success() {
         let _ = std::fs::remove_dir_all(&scratch);
-        return Err(Error::Command(
-            "--appimage-extract exited non-zero".into(),
-        ));
+        return Err(Error::Command("--appimage-extract exited non-zero".into()));
     }
     let squash = scratch.join("squashfs-root");
     let desktop_file = std::fs::read_dir(&squash)
         .ok()
         .and_then(|entries| {
             entries.flatten().find(|e| {
-                e.path().extension().map(|x| x == "desktop").unwrap_or(false)
+                e.path()
+                    .extension()
+                    .map(|x| x == "desktop")
+                    .unwrap_or(false)
             })
         })
         .map(|e| e.path())
@@ -550,9 +560,7 @@ mod safe_extract_tests {
         let d = tmpdir("spurious");
         let mut writer = backhand::FilesystemWriter::default();
         let header = backhand::NodeHeader::new(0o644, 0, 0, 0);
-        writer
-            .push_file(Cursor::new(b"x"), "/f", header)
-            .unwrap();
+        writer.push_file(Cursor::new(b"x"), "/f", header).unwrap();
         let mut sq = Cursor::new(Vec::new());
         writer.write(&mut sq).unwrap();
         let sq_bytes = sq.into_inner();
@@ -567,7 +575,9 @@ mod safe_extract_tests {
         let real_at = f.stream_position().unwrap();
         f.write_all(&sq_bytes).unwrap();
 
-        let off = find_squashfs_offset(&appimage).unwrap().expect("offset found");
+        let off = find_squashfs_offset(&appimage)
+            .unwrap()
+            .expect("offset found");
         assert_eq!(off, real_at, "skipped the spurious magic");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -602,9 +612,7 @@ mod safe_extract_tests {
             assert!(abs_target.exists(), "active target exists");
             assert!(target.to_string_lossy().ends_with(".AppImage"));
             // Desktop entry Exec points at `active`.
-            let desktop = home.join(format!(
-                ".local/share/applications/dropin-{slug}.desktop"
-            ));
+            let desktop = home.join(format!(".local/share/applications/dropin-{slug}.desktop"));
             let text = std::fs::read_to_string(&desktop).unwrap();
             assert!(
                 text.contains(&active.display().to_string()),

@@ -35,7 +35,9 @@ pub fn install(src: &Path, _opts: &InstallOptions) -> Result<InstallOutcome> {
         return Err(Error::Command("flatpak is not installed".into()));
     }
     let d = detect::detect(src)?;
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     crate::run("flatpak", &["install", "--user", "--noninteractive", s])?;
     // Re-read the id after install for the ledger.
     let id = match d.format {
@@ -55,7 +57,10 @@ pub fn install(src: &Path, _opts: &InstallOptions) -> Result<InstallOutcome> {
 pub fn remove_external(name_or_id: &str) -> Result<()> {
     // The ledger stores the slug; try it as an app id directly.
     let id = name_or_id;
-    match crate::run("flatpak", &["uninstall", "--user", "--noninteractive", "-y", id]) {
+    match crate::run(
+        "flatpak",
+        &["uninstall", "--user", "--noninteractive", "-y", id],
+    ) {
         Ok(_) => Ok(()),
         Err(e) => Err(Error::Command(format!("flatpak uninstall failed: {e}"))),
     }

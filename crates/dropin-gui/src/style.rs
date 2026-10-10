@@ -173,6 +173,8 @@ pub fn format_color(format: &str) -> egui::Color32 {
         egui::Color32::from_rgb(60, 140, 110)
     } else if format.contains("Flatpak") {
         egui::Color32::from_rgb(70, 130, 160)
+    } else if format.contains("Windows") {
+        egui::Color32::from_rgb(0, 120, 180)
     } else {
         egui::Color32::from_rgb(90, 98, 112)
     }
@@ -188,11 +190,7 @@ pub fn app_badge(ui: &mut egui::Ui, name: &str, size: f32) {
         .to_string();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     // Two-tone: solid fill reads cleaner than a gradient at small sizes.
-    ui.painter().rect_filled(
-        rect,
-        size * 0.22,
-        color::BADGE_A,
-    );
+    ui.painter().rect_filled(rect, size * 0.22, color::BADGE_A);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -226,11 +224,7 @@ pub fn dim_label(ui: &mut egui::Ui, text: &str) {
 
 /// Faint caption text.
 pub fn faint_label(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .small()
-            .color(color::TEXT_FAINT),
-    );
+    ui.label(egui::RichText::new(text).small().color(color::TEXT_FAINT));
 }
 
 /// Human-readable byte size.

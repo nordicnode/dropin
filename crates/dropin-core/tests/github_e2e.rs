@@ -46,7 +46,8 @@ fn serve(tag: &str, asset_bytes: Vec<u8>) -> (String, Arc<AtomicUsize>, PathBuf)
                 .lines()
                 .find_map(|l| {
                     let ll = l.to_ascii_lowercase();
-                    ll.strip_prefix("if-none-match:").map(|v| v.trim().to_string())
+                    ll.strip_prefix("if-none-match:")
+                        .map(|v| v.trim().to_string())
                 })
                 .unwrap_or_default();
             if path == "/repos/o/r/releases/latest" {

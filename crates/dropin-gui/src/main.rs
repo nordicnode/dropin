@@ -31,8 +31,7 @@ fn main() {
     let want_manager = file.is_none() || args.iter().any(|a| a == "--manager");
     if want_manager {
         let native = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([720.0, 540.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([720.0, 540.0]),
             ..Default::default()
         };
         if let Err(e) = eframe::run_native(
@@ -98,7 +97,9 @@ enum Phase {
     /// The file couldn't even be identified.
     Fatal(String),
     Review(ReviewState),
-    Installing { rx: Receiver<InstallResult> },
+    Installing {
+        rx: Receiver<InstallResult>,
+    },
     Done(InstallResult),
 }
 
@@ -150,7 +151,11 @@ impl DropinApp {
                 }
             },
         };
-        Self { file, phase, allow_net: false }
+        Self {
+            file,
+            phase,
+            allow_net: false,
+        }
     }
 
     fn start_install(&mut self) {
@@ -201,8 +206,6 @@ impl DropinApp {
         self.phase = Phase::Installing { rx };
     }
 }
-
-
 
 impl eframe::App for DropinApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -277,153 +280,153 @@ impl eframe::App for DropinApp {
 
 /// Returns true when the user clicked Install.
 fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) -> bool {
-        // Hero: app badge, name, version, format pill.
-        ui.horizontal(|ui| {
-            style::app_badge(ui, &st.plan.app_name, 64.0);
-            ui.add_space(6.0);
-            ui.vertical(|ui| {
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(&st.plan.app_name)
-                        .size(24.0)
-                        .strong(),
+    // Hero: app badge, name, version, format pill.
+    ui.horizontal(|ui| {
+        style::app_badge(ui, &st.plan.app_name, 64.0);
+        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(&st.plan.app_name).size(24.0).strong());
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                style::badge(
+                    ui,
+                    st.detection.format.label(),
+                    style::format_color(st.detection.format.label()),
                 );
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    style::badge(
-                        ui,
-                        st.detection.format.label(),
-                        style::format_color(st.detection.format.label()),
-                    );
-                    if let Some(v) = &st.plan.version {
-                        style::badge(ui, &format!("v{v}"), style::color::BORDER);
-                    }
-                    style::badge(ui, &style::human_size(st.size), style::color::BORDER);
-                });
+                if let Some(v) = &st.plan.version {
+                    style::badge(ui, &format!("v{v}"), style::color::BORDER);
+                }
+                style::badge(ui, &style::human_size(st.size), style::color::BORDER);
             });
         });
+    });
 
-        ui.add_space(4.0);
-        style::faint_label(ui, &file.display().to_string());
-        ui.label(egui::RichText::new(file.display().to_string()).weak().small());
-        style::faint_label(ui, &format!("sha256 {}", st.sha));
-        ui.add_space(2.0);
-        match &st.verified {
-            dropin_core::verify::Verification::Verified { .. } => {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("●")
-                            .color(style::color::GOOD)
-                            .strong(),
-                    );
-                    ui.label(
-                        egui::RichText::new("Checksum verified")
-                            .color(style::color::GOOD),
-                    );
-                });
-            }
-            dropin_core::verify::Verification::Mismatch { .. } => {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("●")
-                            .color(style::color::BAD)
-                            .strong(),
-                    );
-                    ui.label(
-                        egui::RichText::new("Checksum mismatch — install will be refused")
-                            .color(style::color::BAD)
-                            .strong(),
-                    );
-                });
-            }
-            dropin_core::verify::Verification::Unverified => {
-                style::dim_label(ui, "No checksum file found — skipping verification");
-            }
-        }
-
-        ui.add_space(14.0);
-        style::section_title(ui, "What will happen");
-        for step in &st.plan.steps {
+    ui.add_space(4.0);
+    style::faint_label(ui, &file.display().to_string());
+    ui.label(
+        egui::RichText::new(file.display().to_string())
+            .weak()
+            .small(),
+    );
+    style::faint_label(ui, &format!("sha256 {}", st.sha));
+    ui.add_space(2.0);
+    match &st.verified {
+        dropin_core::verify::Verification::Verified { .. } => {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("→").color(style::color::TEXT_FAINT));
-                style::dim_label(ui, step);
+                ui.label(egui::RichText::new("●").color(style::color::GOOD).strong());
+                ui.label(egui::RichText::new("Checksum verified").color(style::color::GOOD));
             });
         }
-        if st.plan.needs_root {
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("Requires root access.")
-                    .color(style::color::WARN)
-                    .strong(),
+        dropin_core::verify::Verification::Mismatch { .. } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("●").color(style::color::BAD).strong());
+                ui.label(
+                    egui::RichText::new("Checksum mismatch — install will be refused")
+                        .color(style::color::BAD)
+                        .strong(),
+                );
+            });
+        }
+        dropin_core::verify::Verification::Unverified => {
+            style::dim_label(ui, "No checksum file found — skipping verification");
+        }
+    }
+
+    ui.add_space(14.0);
+    style::section_title(ui, "What will happen");
+    for step in &st.plan.steps {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("→").color(style::color::TEXT_FAINT));
+            style::dim_label(ui, step);
+        });
+    }
+    // Wine guidance for Windows apps.
+    let wine_missing = st.detection.format == dropin_core::detect::Format::WindowsExe
+        && !dropin_core::handlers::wine::have_wine();
+    if wine_missing {
+        ui.add_space(8.0);
+        style::card_frame().show(ui, |ui| {
+            style::dim_label(ui, &dropin_core::handlers::wine::install_instructions());
+        });
+    }
+    if st.plan.needs_root {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Requires root access.")
+                .color(style::color::WARN)
+                .strong(),
+        );
+    }
+
+    let needs_trust = st.plan.needs_confirmation;
+    if needs_trust {
+        ui.add_space(14.0);
+        // Safety audit: plain-language findings, most severe first.
+        style::section_title(ui, "Safety check");
+        egui::ScrollArea::vertical()
+            .max_height(170.0)
+            .show(ui, |ui| {
+                for f in &st.findings {
+                    let color = match f.severity {
+                        script::Severity::Info => style::color::GOOD,
+                        script::Severity::Warning => style::color::WARN,
+                        script::Severity::Danger => style::color::BAD,
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("●").color(color).strong());
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(&f.title).strong());
+                            style::dim_label(ui, &f.detail);
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+            });
+        // Internet toggle, only when the audit says it's needed.
+        if st.findings.iter().any(|f| f.needs_net) {
+            ui.add_space(8.0);
+            ui.checkbox(
+                &mut st.allow_net,
+                "Allow internet access just for this install",
+            );
+            style::faint_label(
+                ui,
+                "This installer downloads extra files. Dropin blocks the internet \
+                     by default; allowing it applies to this install only.",
             );
         }
-
-        let needs_trust = st.plan.needs_confirmation;
-        if needs_trust {
-            ui.add_space(14.0);
-            // Safety audit: plain-language findings, most severe first.
-            style::section_title(ui, "Safety check");
-            egui::ScrollArea::vertical()
-                .max_height(170.0)
-                .show(ui, |ui| {
-                    for f in &st.findings {
-                        let color = match f.severity {
-                            script::Severity::Info => style::color::GOOD,
-                            script::Severity::Warning => style::color::WARN,
-                            script::Severity::Danger => style::color::BAD,
-                        };
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("●").color(color).strong());
-                            ui.vertical(|ui| {
-                                ui.label(egui::RichText::new(&f.title).strong());
-                                style::dim_label(ui, &f.detail);
-                            });
-                        });
-                        ui.add_space(8.0);
-                    }
-                });
-            // Internet toggle, only when the audit says it's needed.
-            if st.findings.iter().any(|f| f.needs_net) {
-                ui.add_space(8.0);
-                ui.checkbox(&mut st.allow_net, "Allow internet access just for this install");
-                style::faint_label(
-                    ui,
-                    "This installer downloads extra files. Dropin blocks the internet \
-                     by default; allowing it applies to this install only.",
-                );
-            }
-            ui.add_space(10.0);
-            style::card_frame()
-                .show(ui, |ui| {
-                    style::dim_label(
-                        ui,
-                        "The installer runs sandboxed: no admin rights, only your install \
+        ui.add_space(10.0);
+        style::card_frame().show(ui, |ui| {
+            style::dim_label(
+                ui,
+                "The installer runs sandboxed: no admin rights, only your install \
                          folders are writable, and everything it does is logged. Removing \
                          the app later undoes it completely.",
-                    );
-                    ui.add_space(6.0);
-                    ui.checkbox(
-                        &mut st.trust_checked,
-                        "I trust this installer and want to run it",
-                    );
-                });
-        }
-
-        ui.add_space(20.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let checksum_ok = !matches!(
-                st.verified,
-                dropin_core::verify::Verification::Mismatch { .. }
             );
-            let can_install = (!needs_trust || st.trust_checked) && checksum_ok;
-            let clicked = style::primary_button_enabled(ui, can_install, "Install").clicked();
-            if style::ghost_button(ui, "Cancel").clicked() {
-                std::process::exit(0);
-            }
-            clicked
-        })
-        .inner
+            ui.add_space(6.0);
+            ui.checkbox(
+                &mut st.trust_checked,
+                "I trust this installer and want to run it",
+            );
+        });
     }
+
+    ui.add_space(20.0);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let checksum_ok = !matches!(
+            st.verified,
+            dropin_core::verify::Verification::Mismatch { .. }
+        );
+        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !wine_missing;
+        let clicked = style::primary_button_enabled(ui, can_install, "Install").clicked();
+        if style::ghost_button(ui, "Cancel").clicked() {
+            std::process::exit(0);
+        }
+        clicked
+    })
+    .inner
+}
 
 fn ui_installing(ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
@@ -497,16 +500,22 @@ fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
         ui.add_space(10.0);
         let log_text =
             std::fs::read_to_string(&rep.log_path).unwrap_or_else(|_| "(log unavailable)".into());
-        let tail: String = log_text.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+        let tail: String = log_text
+            .lines()
+            .rev()
+            .take(80)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
         egui::CollapsingHeader::new("View install log")
             .default_open(false)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(200.0)
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(tail).monospace().small(),
-                        );
+                        ui.label(egui::RichText::new(tail).monospace().small());
                     });
             });
     } else if res.ok {

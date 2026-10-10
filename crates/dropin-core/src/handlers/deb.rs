@@ -18,7 +18,10 @@ fn deb_control_field(src: &Path, field: &str) -> Option<String> {
     // Dump to a temp file first: tar sniffs compression from files, not pipes.
     let tmp = std::env::temp_dir().join(format!("dropin-ctrl-{}", std::process::id()));
     std::process::Command::new("sh")
-        .args(["-c", &format!("ar p {s} {control_member} > {}", tmp.display())])
+        .args([
+            "-c",
+            &format!("ar p {s} {control_member} > {}", tmp.display()),
+        ])
         .status()
         .ok()?;
     // Member may be stored as "./control" or "control".
@@ -87,7 +90,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     }
 
     // Extract data.tar.* -> root, preserving the usr/ tree inside root.
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let members = crate::run("ar", &["t", s])?;
     let data_member = members
         .lines()
@@ -116,10 +121,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // file, but not always from a pipe.
     let tmp = std::env::temp_dir().join(format!("dropin-data-{}", std::process::id()));
     let dump = std::process::Command::new("sh")
-        .args([
-            "-c",
-            &format!("ar p {s} {data_member} > {}", tmp.display()),
-        ])
+        .args(["-c", &format!("ar p {s} {data_member} > {}", tmp.display())])
         .status()
         .map_err(|e| Error::Command(format!("reading deb payload: {e}")))?;
     if !dump.success() {
@@ -216,12 +218,20 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 
 /// System install via the distro package manager with a polkit prompt.
 fn install_system(src: &Path) -> Result<InstallOutcome> {
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     // Detect distro family from /etc/os-release ID_LIKE / ID.
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("ID_LIKE=debian") || os_release.contains("\nID=debian") || os_release.contains("\nID=ubuntu") {
+    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("ID_LIKE=debian")
+        || os_release.contains("\nID=debian")
+        || os_release.contains("\nID=ubuntu")
+    {
         ("pkexec", vec!["apt", "install", "-y", s])
-    } else if os_release.contains("fedora") || os_release.contains("rhel") || os_release.contains("ID_LIKE=\"rhel") {
+    } else if os_release.contains("fedora")
+        || os_release.contains("rhel")
+        || os_release.contains("ID_LIKE=\"rhel")
+    {
         ("pkexec", vec!["dnf", "install", "-y", s])
     } else if os_release.contains("arch") {
         ("pkexec", vec!["pacman", "-U", "--noconfirm", s])

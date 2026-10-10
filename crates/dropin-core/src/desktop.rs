@@ -133,7 +133,10 @@ fn adopt_desktop_file_inner(
         });
 
     let entry = DesktopEntry {
-        name: map.get("Name").cloned().unwrap_or_else(|| app_name.to_string()),
+        name: map
+            .get("Name")
+            .cloned()
+            .unwrap_or_else(|| app_name.to_string()),
         exec,
         icon,
         comment: map.get("Comment").cloned(),
@@ -207,9 +210,7 @@ fn install_icon(icon_ref: &str, slug: &str, install_root: &Path) -> Option<PathB
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
-    let dest = UserDirs::new()
-        .icons
-        .join(format!("dropin-{slug}{ext}"));
+    let dest = UserDirs::new().icons.join(format!("dropin-{slug}{ext}"));
     std::fs::copy(&src, &dest).ok()?;
     Some(dest)
 }
@@ -250,7 +251,10 @@ mod tests {
     fn rewrite_exec_appimage_apprun() {
         // The AppImage convention: Exec=AppRun means the image itself.
         let img = Path::new("/home/u/Applications/app-x86_64.AppImage");
-        assert_eq!(rewrite_exec("AppRun", img, true), "/home/u/Applications/app-x86_64.AppImage");
+        assert_eq!(
+            rewrite_exec("AppRun", img, true),
+            "/home/u/Applications/app-x86_64.AppImage"
+        );
         assert_eq!(
             rewrite_exec("AppRun %F", img, true),
             "/home/u/Applications/app-x86_64.AppImage %F"

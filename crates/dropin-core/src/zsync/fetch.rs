@@ -64,7 +64,9 @@ pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), St
     let mut buf = [0u8; 64 * 1024];
     let mut total: u64 = 0;
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("reading body: {e}"))?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("reading body: {e}"))?;
         if n == 0 {
             break;
         }
@@ -75,7 +77,8 @@ pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), St
             return Err(format!("download exceeded {max_bytes} bytes"));
         }
         use std::io::Write;
-        out.write_all(&buf[..n]).map_err(|e| format!("writing file: {e}"))?;
+        out.write_all(&buf[..n])
+            .map_err(|e| format!("writing file: {e}"))?;
     }
     std::fs::rename(&tmp, path).map_err(|e| format!("finishing download: {e}"))?;
     Ok(())
@@ -130,7 +133,9 @@ pub fn get_range_into(
     let mut skip = if ranged { 0 } else { start };
     let mut remaining = len;
     loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("reading body: {e}"))?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("reading body: {e}"))?;
         if n == 0 {
             break;
         }

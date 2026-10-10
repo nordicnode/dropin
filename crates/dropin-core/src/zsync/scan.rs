@@ -42,7 +42,10 @@ pub struct SourceMap {
 
 impl SourceMap {
     fn new(blocks: usize) -> Self {
-        Self { offsets: vec![NOT_FOUND; blocks], matched: 0 }
+        Self {
+            offsets: vec![NOT_FOUND; blocks],
+            matched: 0,
+        }
     }
 
     pub fn block_count(&self) -> usize {
@@ -59,7 +62,9 @@ impl SourceMap {
 
     /// File offset where `block` was found, if any.
     pub fn offset_of(&self, block: usize) -> Option<u64> {
-        self.offsets.get(block).and_then(|&o| (o != NOT_FOUND).then_some(o))
+        self.offsets
+            .get(block)
+            .and_then(|&o| (o != NOT_FOUND).then_some(o))
     }
 
     /// First offset wins: a block found twice is identical bytes either way.
@@ -99,7 +104,10 @@ impl BlockIndex {
             };
             by_key.entry(key).or_default().push(block);
         }
-        Self { seq_matches: seq, by_key }
+        Self {
+            seq_matches: seq,
+            by_key,
+        }
     }
 
     fn candidates(&self, r1: Rsum, r2: Rsum) -> Option<&Vec<usize>> {
@@ -138,7 +146,10 @@ pub fn scan(local: &Path, control: &ControlFile) -> Result<SourceMap> {
     let index = BlockIndex::build(control);
 
     let mut file = File::open(local).map_err(|e| Error::Zsync(e.to_string()))?;
-    let file_len = file.metadata().map_err(|e| Error::Zsync(e.to_string()))?.len();
+    let file_len = file
+        .metadata()
+        .map_err(|e| Error::Zsync(e.to_string()))?
+        .len();
 
     // Buffer holds one chunk plus the lookahead windows; zeroed each pass
     // so the tail past EOF is the zero padding zsync assumes.
@@ -148,7 +159,8 @@ pub fn scan(local: &Path, control: &ControlFile) -> Result<SourceMap> {
     let mut base: u64 = 0;
     while base < file_len {
         buf.fill(0);
-        file.seek(SeekFrom::Start(base)).map_err(|e| Error::Zsync(e.to_string()))?;
+        file.seek(SeekFrom::Start(base))
+            .map_err(|e| Error::Zsync(e.to_string()))?;
         let mut filled = 0;
         while filled < buf.len() {
             match file.read(&mut buf[filled..]) {
@@ -163,7 +175,11 @@ pub fn scan(local: &Path, control: &ControlFile) -> Result<SourceMap> {
         let mut i = 0;
         // Rolling checksums of the windows at i and i+bs.
         let mut r1 = Rsum::of(&buf[0..bs]);
-        let mut r2 = if seq > 1 { Rsum::of(&buf[bs..2 * bs]) } else { Rsum::default() };
+        let mut r2 = if seq > 1 {
+            Rsum::of(&buf[bs..2 * bs])
+        } else {
+            Rsum::default()
+        };
 
         while i < fresh {
             let mut jumped = false;
@@ -244,11 +260,16 @@ fn extend_runs(local: &Path, control: &ControlFile, map: &mut SourceMap) -> Resu
     let bs = control.blocksize;
     let strong_len = control.hash_lengths.checksum_bytes as usize;
     let mut file = File::open(local).map_err(|e| Error::Zsync(e.to_string()))?;
-    let file_len = file.metadata().map_err(|e| Error::Zsync(e.to_string()))?.len();
+    let file_len = file
+        .metadata()
+        .map_err(|e| Error::Zsync(e.to_string()))?
+        .len();
 
     let mut window = vec![0u8; bs as usize];
     for b in 0..n {
-        let Some(off) = map.offset_of(b) else { continue };
+        let Some(off) = map.offset_of(b) else {
+            continue;
+        };
         let next = b + 1;
         if next >= n || map.offset_of(next).is_some() {
             continue;
@@ -257,7 +278,8 @@ fn extend_runs(local: &Path, control: &ControlFile, map: &mut SourceMap) -> Resu
         // Bytes past EOF are zeros, per zsync's padding.
         window.fill(0);
         if at < file_len {
-            file.seek(SeekFrom::Start(at)).map_err(|e| Error::Zsync(e.to_string()))?;
+            file.seek(SeekFrom::Start(at))
+                .map_err(|e| Error::Zsync(e.to_string()))?;
             let mut filled = 0;
             while filled < window.len() {
                 match file.read(&mut window[filled..]) {
@@ -282,8 +304,11 @@ mod tests {
     /// Build a synthetic control file: blocks of `blocksize` bytes with
     /// known content, checksummed per the format.
     fn synth(blocks: &[Vec<u8>], blocksize: usize, seq: u8) -> ControlFile {
-        let lengths =
-            HashLengths { seq_matches: seq, rsum_bytes: 2, checksum_bytes: 4 };
+        let lengths = HashLengths {
+            seq_matches: seq,
+            rsum_bytes: 2,
+            checksum_bytes: 4,
+        };
         let sums = blocks
             .iter()
             .map(|b| {
@@ -322,12 +347,17 @@ mod tests {
 
     fn rand_suffix() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let n = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         format!("{n}-{}", std::process::id())
     }
 
     fn block_data(seed: u8, len: usize) -> Vec<u8> {
-        (0..len).map(|i| seed.wrapping_add((i * 31) as u8)).collect()
+        (0..len)
+            .map(|i| seed.wrapping_add((i * 31) as u8))
+            .collect()
     }
 
     #[test]
@@ -363,7 +393,12 @@ mod tests {
         file.extend_from_slice(&[0xBBu8; 50]);
         let p = write_temp(&file);
         let map = scan(&p, &control).unwrap();
-        assert!(map.is_complete(), "matched {}/{}", map.matched(), map.block_count());
+        assert!(
+            map.is_complete(),
+            "matched {}/{}",
+            map.matched(),
+            map.block_count()
+        );
         for i in 0..blocks.len() {
             assert_eq!(map.offset_of(i), Some((100 + i * bs) as u64));
         }

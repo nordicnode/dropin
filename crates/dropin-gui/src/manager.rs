@@ -156,9 +156,7 @@ impl ManagerApp {
                 Ok(reports) => {
                     let n = reports
                         .iter()
-                        .filter(|r| {
-                            matches!(r.status, install::UpdateStatus::Updated(_))
-                        })
+                        .filter(|r| matches!(r.status, install::UpdateStatus::Updated(_)))
                         .count();
                     (fmt_reports(reports), n)
                 }
@@ -173,7 +171,10 @@ impl ManagerApp {
                     ))
                     .show();
             }
-            OpDone { message, refresh_apps: true }
+            OpDone {
+                message,
+                refresh_apps: true,
+            }
         });
     }
 
@@ -184,7 +185,10 @@ impl ManagerApp {
             let done = f();
             let _ = tx.send(done);
         });
-        self.busy = Some(BusyOp { label: label.to_string(), rx });
+        self.busy = Some(BusyOp {
+            label: label.to_string(),
+            rx,
+        });
         self.status = format!("{label}…");
     }
 
@@ -195,17 +199,18 @@ impl ManagerApp {
     fn poll(&mut self, ctx: &egui::Context) {
         // Install dialogs spawned from here: refresh when any exits.
         let mut exited = false;
-        self.install_children.retain_mut(|child| match child.try_wait() {
-            Ok(Some(_)) => {
-                exited = true;
-                false
-            }
-            Ok(None) => true,
-            Err(_) => {
-                exited = true;
-                false
-            }
-        });
+        self.install_children
+            .retain_mut(|child| match child.try_wait() {
+                Ok(Some(_)) => {
+                    exited = true;
+                    false
+                }
+                Ok(None) => true,
+                Err(_) => {
+                    exited = true;
+                    false
+                }
+            });
         if exited {
             self.refresh();
             self.status = "App list refreshed.".to_string();
@@ -282,7 +287,10 @@ impl eframe::App for ManagerApp {
                             Ok(reports) => fmt_reports(reports),
                             Err(e) => format!("Update check failed: {e}"),
                         };
-                        OpDone { message: msg, refresh_apps: true }
+                        OpDone {
+                            message: msg,
+                            refresh_apps: true,
+                        }
                     });
                 }
                 if style::ghost_button(ui, "Doctor").clicked() && !busy {
@@ -393,7 +401,9 @@ impl eframe::App for ManagerApp {
                 if let Some(op) = &self.busy {
                     ui.spinner();
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("{}…", op.label)).color(style::color::TEXT_DIM));
+                    ui.label(
+                        egui::RichText::new(format!("{}…", op.label)).color(style::color::TEXT_DIM),
+                    );
                 } else if self.status.is_empty() {
                     style::faint_label(ui, "Ready");
                 } else {
@@ -409,9 +419,16 @@ impl eframe::App for ManagerApp {
             if self.apps.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(60.0);
-                    ui.label(egui::RichText::new("No apps installed yet").size(18.0).strong());
+                    ui.label(
+                        egui::RichText::new("No apps installed yet")
+                            .size(18.0)
+                            .strong(),
+                    );
                     ui.add_space(8.0);
-                    style::dim_label(ui, "Click “Install app…” above, or double-click any installer file.");
+                    style::dim_label(
+                        ui,
+                        "Click “Install app…” above, or double-click any installer file.",
+                    );
                     ui.add_space(8.0);
                     style::faint_label(ui, "You can also drag and drop files onto this window.");
                 });
@@ -432,7 +449,11 @@ impl eframe::App for ManagerApp {
             if filtered.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label(egui::RichText::new("No apps match your search").size(16.0).strong());
+                    ui.label(
+                        egui::RichText::new("No apps match your search")
+                            .size(16.0)
+                            .strong(),
+                    );
                 });
                 return;
             }
@@ -506,20 +527,12 @@ impl ManagerApp {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&app.name).size(17.0).strong());
                         if app.verified {
-                            ui.label(
-                                egui::RichText::new("✓")
-                                    .color(style::color::GOOD)
-                                    .strong(),
-                            );
+                            ui.label(egui::RichText::new("✓").color(style::color::GOOD).strong());
                         }
                     });
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        style::badge(
-                            ui,
-                            &app.format,
-                            style::format_color(&app.format),
-                        );
+                        style::badge(ui, &app.format, style::format_color(&app.format));
                         if let Some(v) = &app.version {
                             style::badge(ui, &format!("v{v}"), style::color::BORDER);
                         }
@@ -572,7 +585,10 @@ impl ManagerApp {
                     Ok(reports) => fmt_reports(reports),
                     Err(e) => format!("Update failed: {e}"),
                 };
-                OpDone { message: msg, refresh_apps: true }
+                OpDone {
+                    message: msg,
+                    refresh_apps: true,
+                }
             }),
             Act::Rollback => self.rollback_name = Some(name),
             Act::Remove => {
@@ -587,11 +603,14 @@ impl ManagerApp {
                 let message = install::untrack(&name)
                     .map(|m| format!("{m}."))
                     .unwrap_or_else(|e| format!("Couldn't untrack: {e}"));
-                OpDone { message, refresh_apps: true }
+                OpDone {
+                    message,
+                    refresh_apps: true,
+                }
             }),
             Act::Launch => {
-                let message = install::launch(&name)
-                    .unwrap_or_else(|e| format!("Couldn't launch: {e}"));
+                let message =
+                    install::launch(&name).unwrap_or_else(|e| format!("Couldn't launch: {e}"));
                 self.status = message;
             }
             Act::EnvVars => {
@@ -655,7 +674,10 @@ impl ManagerApp {
                     let message = integrate::integrate(true)
                         .map(|_| "dropin is set up — double-click any installer file.".to_string())
                         .unwrap_or_else(|e| format!("Setup failed: {e}"));
-                    OpDone { message, refresh_apps: false }
+                    OpDone {
+                        message,
+                        refresh_apps: false,
+                    }
                 });
                 open = false;
             }
@@ -700,7 +722,10 @@ impl ManagerApp {
                     let message = install::track(&name, &repo)
                         .map(|m| format!("{m}."))
                         .unwrap_or_else(|e| format!("Couldn't track: {e}"));
-                    OpDone { message, refresh_apps: true }
+                    OpDone {
+                        message,
+                        refresh_apps: true,
+                    }
                 });
                 open = false;
             }
@@ -724,7 +749,10 @@ impl ManagerApp {
                             .size(15.0),
                     );
                     ui.add_space(6.0);
-                    ui.checkbox(&mut self.remove_purge, "Also move leftover config/cache/data to the trash");
+                    ui.checkbox(
+                        &mut self.remove_purge,
+                        "Also move leftover config/cache/data to the trash",
+                    );
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -733,7 +761,9 @@ impl ManagerApp {
                             }
                             ui.add_enabled_ui(!busy, |ui| {
                                 let btn = egui::Button::new(
-                                    egui::RichText::new("Remove").strong().color(style::color::TEXT),
+                                    egui::RichText::new("Remove")
+                                        .strong()
+                                        .color(style::color::TEXT),
                                 )
                                 .fill(style::color::BAD)
                                 .corner_radius(8.0)
@@ -753,7 +783,10 @@ impl ManagerApp {
                 self.run_op(&format!("Removing {name}"), move || {
                     let message = install::remove(&name, purge)
                         .unwrap_or_else(|e| format!("Couldn't remove: {e}"));
-                    OpDone { message, refresh_apps: true }
+                    OpDone {
+                        message,
+                        refresh_apps: true,
+                    }
                 });
                 open = false;
             }
@@ -803,7 +836,10 @@ impl ManagerApp {
                     let message = install::rollback(&name)
                         .map(|m| format!("{m}."))
                         .unwrap_or_else(|e| format!("Couldn't roll back: {e}"));
-                    OpDone { message, refresh_apps: true }
+                    OpDone {
+                        message,
+                        refresh_apps: true,
+                    }
                 });
                 open = false;
             }
@@ -844,21 +880,42 @@ impl ManagerApp {
                     if self.doctor_issues.is_empty() {
                         ui.label("No issues found. Everything looks healthy.");
                     } else {
-                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                            for issue in &self.doctor_issues {
-                                let tag = match issue.kind {
-                                    health::HealthKind::Orphaned => "orphaned",
-                                    health::HealthKind::Duplicate => "duplicate",
-                                    health::HealthKind::Shadowed => "shadowed",
-                                    health::HealthKind::CrossSource => "also-installed",
-                                    health::HealthKind::BrokenExec => "broken-menu",
-                                    health::HealthKind::NoFuse => "no-fuse",
-                                };
-                                ui.label(egui::RichText::new(format!("[{tag}] {}", issue.message)).strong());
-                                ui.label(egui::RichText::new(format!("hint: {}", issue.hint)).weak());
-                                ui.add_space(6.0);
-                            }
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                for issue in &self.doctor_issues {
+                                    let tag = match issue.kind {
+                                        health::HealthKind::Orphaned => "orphaned",
+                                        health::HealthKind::Duplicate => "duplicate",
+                                        health::HealthKind::Shadowed => "shadowed",
+                                        health::HealthKind::CrossSource => "also-installed",
+                                        health::HealthKind::BrokenExec => "broken-menu",
+                                        health::HealthKind::NoFuse => "no-fuse",
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("[{tag}] {}", issue.message))
+                                            .strong(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("hint: {}", issue.hint)).weak(),
+                                    );
+                                    ui.add_space(6.0);
+                                }
+                            });
+                    }
+                    // Wine status for Windows apps.
+                    ui.add_space(12.0);
+                    style::section_title(ui, "Windows apps");
+                    if dropin_core::handlers::wine::have_wine() {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("●").color(style::color::GOOD).strong());
+                            style::dim_label(
+                                ui,
+                                "Wine is installed — .exe files can be installed.",
+                            );
                         });
+                    } else {
+                        style::dim_label(ui, &dropin_core::handlers::wine::install_instructions());
                     }
                 });
             if !open {

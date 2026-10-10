@@ -215,9 +215,8 @@ impl Ledger {
     pub fn env_vars(&self, name: &str) -> Result<std::collections::BTreeMap<String, String>> {
         let inst = self.get(name)?;
         match inst.env_vars {
-            Some(json) => serde_json::from_str(&json).map_err(|e| {
-                crate::Error::Unsupported(format!("bad env vars for {name}: {e}"))
-            }),
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| crate::Error::Unsupported(format!("bad env vars for {name}: {e}"))),
             None => Ok(std::collections::BTreeMap::new()),
         }
     }
@@ -228,7 +227,9 @@ impl Ledger {
              FROM installs WHERE name = ?1",
         )?;
         let mut rows = stmt.query(params![name])?;
-        let row = rows.next()?.ok_or_else(|| Error::NotInstalled(name.to_string()))?;
+        let row = rows
+            .next()?
+            .ok_or_else(|| Error::NotInstalled(name.to_string()))?;
         let id: i64 = row.get(0)?;
         let files = self.files_for(id)?;
         Ok(Install {
@@ -285,8 +286,22 @@ impl Ledger {
         })?;
         let mut out = Vec::new();
         for r in rows {
-            let (id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars, created_at) =
-                r?;
+            let (
+                id,
+                name,
+                format,
+                version,
+                source_path,
+                source_sha256,
+                install_root,
+                external,
+                update_info,
+                verified,
+                github_repo,
+                signing_key,
+                env_vars,
+                created_at,
+            ) = r?;
             out.push(Install {
                 id,
                 name,

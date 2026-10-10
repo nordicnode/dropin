@@ -115,15 +115,18 @@ pub fn detect(path: &Path) -> Result<Detection> {
         }
     }
     // rpm: ED AB EE DB
-    if head.len() >= 4 && head[0] == 0xED && head[1] == 0xAB && head[2] == 0xEE && head[3] == 0xDB
-    {
+    if head.len() >= 4 && head[0] == 0xED && head[1] == 0xAB && head[2] == 0xEE && head[3] == 0xDB {
         return Ok(mk(path, Format::Rpm, true));
     }
     // gzip / xz / bzip2 / zstd -> tarball (extension refines)
     let compressed = (head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b)
         || (head.len() >= 6 && head[0] == 0xFD && head[1] == b'7' && head[2] == b'z')
         || (head.len() >= 3 && head[0] == b'B' && head[1] == b'Z' && head[2] == b'h')
-        || (head.len() >= 4 && head[0] == 0x28 && head[1] == 0xB5 && head[2] == 0x2F && head[3] == 0xFD);
+        || (head.len() >= 4
+            && head[0] == 0x28
+            && head[1] == 0xB5
+            && head[2] == 0x2F
+            && head[3] == 0xFD);
     if compressed {
         return Ok(mk(path, Format::Tarball, true));
     }

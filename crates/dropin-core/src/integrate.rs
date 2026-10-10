@@ -33,9 +33,22 @@ const ARCHIVE_MIMES: &[&str] = &[
 
 /// Archive globs for Thunar (which matches on filename, not MIME).
 const ARCHIVE_GLOBS: &[&str] = &[
-    "*.tar.gz", "*.tgz", "*.tar.xz", "*.txz", "*.tar.bz2", "*.tbz2", "*.tar.zst",
-    "*.zip", "*.AppImage", "*.deb", "*.rpm", "*.flatpakref", "*.flatpak", "*.sh",
-    "*.run", "*.bin",
+    "*.tar.gz",
+    "*.tgz",
+    "*.tar.xz",
+    "*.txz",
+    "*.tar.bz2",
+    "*.tbz2",
+    "*.tar.zst",
+    "*.zip",
+    "*.AppImage",
+    "*.deb",
+    "*.rpm",
+    "*.flatpakref",
+    "*.flatpak",
+    "*.sh",
+    "*.run",
+    "*.bin",
 ];
 
 fn gui_exe() -> PathBuf {
@@ -202,8 +215,7 @@ fn dolphin(enable: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn nemo(enable: bool) -> Result<()> {
-    let path =
-        crate::home_dir().join(".local/share/nemo/actions/dropin-install.nemo_action");
+    let path = crate::home_dir().join(".local/share/nemo/actions/dropin-install.nemo_action");
     if !enable {
         remove_file(&path);
         return Ok(());
@@ -231,8 +243,7 @@ fn nemo(enable: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn nautilus(enable: bool) -> Result<()> {
-    let path =
-        crate::home_dir().join(".local/share/nautilus-python/extensions/dropin.py");
+    let path = crate::home_dir().join(".local/share/nautilus-python/extensions/dropin.py");
     if !enable {
         remove_file(&path);
         // Nautilus byte-compiles extensions on load; don't leave ours behind.
@@ -316,7 +327,9 @@ fn thunar(enable: bool) -> Result<()> {
         if xml.contains("</actions>") {
             xml = xml.replacen("</actions>", &format!("{action}</actions>"), 1);
         } else {
-            xml = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<actions>\n{action}</actions>\n");
+            xml = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<actions>\n{action}</actions>\n"
+            );
         }
         // Safety backup before writing a merged file.
         let backup = path.with_extension("xml.dropin-bak");

@@ -53,7 +53,11 @@ pub fn check() -> Vec<HealthIssue> {
     check_with(&dirs, &system_desktop_dirs(), &installs)
 }
 
-fn check_with(dirs: &UserDirs, sys_desktop_dirs: &[PathBuf], installs: &[Install]) -> Vec<HealthIssue> {
+fn check_with(
+    dirs: &UserDirs,
+    sys_desktop_dirs: &[PathBuf],
+    installs: &[Install],
+) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
     issues.extend(check_orphaned(installs));
     issues.extend(check_duplicates(dirs, installs));
@@ -120,7 +124,10 @@ fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> 
         };
         issues.push(HealthIssue {
             kind: HealthKind::BrokenExec,
-            message: format!("'{}' menu entry points at a missing program: {bin}", inst.name),
+            message: format!(
+                "'{}' menu entry points at a missing program: {bin}",
+                inst.name
+            ),
             hint,
         });
     }
@@ -145,10 +152,7 @@ fn check_orphaned(installs: &[Install]) -> Vec<HealthIssue> {
         })
         .map(|i| HealthIssue {
             kind: HealthKind::Orphaned,
-            message: format!(
-                "'{}': its files are gone (deleted outside dropin?)",
-                i.name
-            ),
+            message: format!("'{}': its files are gone (deleted outside dropin?)", i.name),
             hint: format!("run `dropin remove {}` to clear the ledger entry", i.name),
         })
         .collect()
@@ -195,7 +199,10 @@ fn check_duplicates(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> {
     }
     let mut issues = Vec::new();
     for group in by_name.values().filter(|g| g.len() > 1) {
-        let names: Vec<_> = group.iter().map(|i| format!("'{}' ({})", i.name, i.format)).collect();
+        let names: Vec<_> = group
+            .iter()
+            .map(|i| format!("'{}' ({})", i.name, i.format))
+            .collect();
         issues.push(HealthIssue {
             kind: HealthKind::Duplicate,
             message: format!("possible duplicate install: {}", names.join(", ")),
@@ -222,11 +229,7 @@ fn system_desktop_dirs() -> Vec<PathBuf> {
 /// A dropin-managed menu entry that hides a system entry of the same name.
 /// Dangerous because deleting the AppImage leaves a dead launcher hiding
 /// the working system app.
-fn check_shadowed(
-    dirs: &UserDirs,
-    sys: &[PathBuf],
-    installs: &[Install],
-) -> Vec<HealthIssue> {
+fn check_shadowed(dirs: &UserDirs, sys: &[PathBuf], installs: &[Install]) -> Vec<HealthIssue> {
     if sys.is_empty() {
         return Vec::new();
     }
@@ -268,7 +271,10 @@ fn installed_via_system(name: &str) -> Vec<&'static str> {
         let out = std::process::Command::new("dpkg-query")
             .args(["-W", "-f=${db:Status-Status}", name])
             .output();
-        if out.map(|o| String::from_utf8_lossy(&o.stdout).trim() == "installed").unwrap_or(false) {
+        if out
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "installed")
+            .unwrap_or(false)
+        {
             via.push("dpkg");
         }
     }
@@ -350,7 +356,6 @@ fn check_cross_source(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue>
     issues
 }
 
-
 /// Conservative guard for `remove --purge`: true when the app name is still
 /// provided by another ledger entry, a system package, or a system .desktop
 /// entry — in which case shared config dirs must not be trashed.
@@ -374,9 +379,9 @@ pub(crate) fn name_still_provided(installs: &[Install], inst: &Install) -> bool 
         .filter_map(|f| Path::new(f).file_name().map(|b| b.to_owned()))
         .collect();
     !basenames.is_empty()
-        && system_desktop_dirs().iter().any(|d| {
-            basenames.iter().any(|b| d.join(b).exists())
-        })
+        && system_desktop_dirs()
+            .iter()
+            .any(|d| basenames.iter().any(|b| d.join(b).exists()))
 }
 
 #[cfg(test)]
@@ -438,10 +443,7 @@ mod tests {
         // An install with a live file is fine.
         let live_file = d.join("app.AppImage");
         std::fs::write(&live_file, b"x").unwrap();
-        let live = install(
-            "live",
-            vec![live_file.display().to_string()],
-        );
+        let live = install("live", vec![live_file.display().to_string()]);
         assert!(check_orphaned(&[live]).is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -457,11 +459,19 @@ mod tests {
         }
         let a = install(
             "foo-ai",
-            vec![dirs.desktop_entries.join("foo-ai.desktop").display().to_string()],
+            vec![dirs
+                .desktop_entries
+                .join("foo-ai.desktop")
+                .display()
+                .to_string()],
         );
         let b = install(
             "foo-tb",
-            vec![dirs.desktop_entries.join("foo-tb.desktop").display().to_string()],
+            vec![dirs
+                .desktop_entries
+                .join("foo-tb.desktop")
+                .display()
+                .to_string()],
         );
         let issues = check_duplicates(&dirs, &[a, b]);
         assert_eq!(issues.len(), 1);
@@ -477,11 +487,19 @@ mod tests {
         let sys = d.join("sysapps");
         std::fs::create_dir_all(&sys).unwrap();
         // Same basename in both places: user entry shadows the system one.
-        std::fs::write(dirs.desktop_entries.join("thing.desktop"), b"[Desktop Entry]\n").unwrap();
+        std::fs::write(
+            dirs.desktop_entries.join("thing.desktop"),
+            b"[Desktop Entry]\n",
+        )
+        .unwrap();
         std::fs::write(sys.join("thing.desktop"), b"[Desktop Entry]\n").unwrap();
         let inst = install(
             "thing",
-            vec![dirs.desktop_entries.join("thing.desktop").display().to_string()],
+            vec![dirs
+                .desktop_entries
+                .join("thing.desktop")
+                .display()
+                .to_string()],
         );
         let issues = check_shadowed(&dirs, &[sys], &[inst]);
         assert_eq!(issues.len(), 1);
@@ -496,10 +514,18 @@ mod tests {
         std::fs::create_dir_all(&dirs.desktop_entries).unwrap();
         let sys = d.join("sysapps");
         std::fs::create_dir_all(&sys).unwrap();
-        std::fs::write(dirs.desktop_entries.join("mine.desktop"), b"[Desktop Entry]\n").unwrap();
+        std::fs::write(
+            dirs.desktop_entries.join("mine.desktop"),
+            b"[Desktop Entry]\n",
+        )
+        .unwrap();
         let inst = install(
             "mine",
-            vec![dirs.desktop_entries.join("mine.desktop").display().to_string()],
+            vec![dirs
+                .desktop_entries
+                .join("mine.desktop")
+                .display()
+                .to_string()],
         );
         assert!(check_shadowed(&dirs, &[sys], &[inst]).is_empty());
         let _ = std::fs::remove_dir_all(&d);
@@ -516,7 +542,10 @@ mod tests {
         std::fs::write(&img, b"fake").unwrap();
         std::fs::write(
             dirs.desktop_entries.join("dropin-myapp.desktop"),
-            format!("[Desktop Entry]\nName=MyApp\nExec={}/AppRun\n", img.display()),
+            format!(
+                "[Desktop Entry]\nName=MyApp\nExec={}/AppRun\n",
+                img.display()
+            ),
         )
         .unwrap();
         let inst = install("myapp", vec![img.display().to_string()]);

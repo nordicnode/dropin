@@ -15,7 +15,9 @@ fn is_zip(src: &Path) -> bool {
 
 /// List archive members (one path per line, no leading ./).
 fn list_members(src: &Path) -> Result<Vec<String>> {
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let out = if is_zip(src) {
         if !have("unzip") {
             return Err(Error::Command("`unzip` is not installed".into()));
@@ -38,8 +40,12 @@ fn list_members(src: &Path) -> Result<Vec<String>> {
 }
 
 fn extract(src: &Path, dest: &Path, strip: usize) -> Result<()> {
-    let s = src.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
-    let d = dest.to_str().ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let s = src
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
+    let d = dest
+        .to_str()
+        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     std::fs::create_dir_all(dest)?;
     if is_zip(src) {
         // unzip has no strip-components; emulate by extracting then moving.
@@ -123,7 +129,12 @@ fn sniff(_members: &[String], src: &Path, strip: usize) -> Result<Sniff> {
         if rel.ends_with("app.asar") {
             has_app_asar = true;
         }
-        if entry.path().extension().map(|e| e == "desktop").unwrap_or(false) {
+        if entry
+            .path()
+            .extension()
+            .map(|e| e == "desktop")
+            .unwrap_or(false)
+        {
             desktop_files.push(rel.clone());
         }
         if entry.file_type().is_file() && is_elf_executable(entry.path()) {
