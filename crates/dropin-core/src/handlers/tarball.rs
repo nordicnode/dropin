@@ -47,9 +47,9 @@ fn list_members_zip(src: &Path) -> Result<Vec<String>> {
     })?;
     let mut members = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
-        let file = archive.by_index(i).map_err(|e| {
-            Error::Command(format!("Couldn't read zip entry {i}.\n\nDetails: {e}"))
-        })?;
+        let file = archive
+            .by_index(i)
+            .map_err(|e| Error::Command(format!("Couldn't read zip entry {i}.\n\nDetails: {e}")))?;
         // Zip paths use forward slashes; the enclosed_name check happens
         // in assert_safe_member via the caller.
         members.push(file.name().to_string());
@@ -59,7 +59,7 @@ fn list_members_zip(src: &Path) -> Result<Vec<String>> {
 
 /// Detect tar compression from magic bytes (more reliable than extension).
 #[derive(Clone, Copy, PartialEq)]
-enum TarCompression {
+pub(crate) enum TarCompression {
     Gzip,
     Bzip2,
     Xz,
@@ -67,7 +67,7 @@ enum TarCompression {
     None,
 }
 
-fn detect_tar_compression(src: &Path) -> Result<TarCompression> {
+pub(crate) fn detect_tar_compression(src: &Path) -> Result<TarCompression> {
     use std::io::Read;
     let mut f = std::fs::File::open(src).map_err(|e| {
         Error::Command(format!(
@@ -82,7 +82,14 @@ fn detect_tar_compression(src: &Path) -> Result<TarCompression> {
     if n >= 3 && magic[0] == b'B' && magic[1] == b'Z' && magic[2] == b'h' {
         return Ok(TarCompression::Bzip2);
     }
-    if n >= 6 && magic[0] == 0xfd && magic[1] == b'7' && magic[2] == b'z' && magic[3] == b'X' && magic[4] == b'Z' && magic[5] == 0x00 {
+    if n >= 6
+        && magic[0] == 0xfd
+        && magic[1] == b'7'
+        && magic[2] == b'z'
+        && magic[3] == b'X'
+        && magic[4] == b'Z'
+        && magic[5] == 0x00
+    {
         return Ok(TarCompression::Xz);
     }
     if n >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd {
@@ -92,13 +99,10 @@ fn detect_tar_compression(src: &Path) -> Result<TarCompression> {
     Ok(TarCompression::None)
 }
 
-fn list_members_tar(src: &Path) -> Result<Vec<String>> {
+pub(crate) fn list_members_tar(src: &Path) -> Result<Vec<String>> {
     let comp = detect_tar_compression(src)?;
-    let file = std::fs::File::open(src).map_err(|e| {
-        Error::Command(format!(
-            "Couldn't read the archive file.\n\nDetails: {e}"
-        ))
-    })?;
+    let file = std::fs::File::open(src)
+        .map_err(|e| Error::Command(format!("Couldn't read the archive file.\n\nDetails: {e}")))?;
     let mut members = Vec::new();
     match comp {
         TarCompression::Gzip => {
@@ -126,10 +130,7 @@ fn list_members_tar(src: &Path) -> Result<Vec<String>> {
     Ok(members)
 }
 
-fn collect_tar_members<R: std::io::Read>(
-    reader: R,
-    members: &mut Vec<String>,
-) -> Result<()> {
+fn collect_tar_members<R: std::io::Read>(reader: R, members: &mut Vec<String>) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
     for entry in archive.entries().map_err(|e| {
         Error::Command(format!(
@@ -225,13 +226,10 @@ fn strip_path(path: &str, strip: usize) -> Option<String> {
     Some(rest.join("/"))
 }
 
-fn extract_tar(src: &Path, dest: &Path, strip: usize) -> Result<()> {
+pub(crate) fn extract_tar(src: &Path, dest: &Path, strip: usize) -> Result<()> {
     let comp = detect_tar_compression(src)?;
-    let file = std::fs::File::open(src).map_err(|e| {
-        Error::Command(format!(
-            "Couldn't read the archive file.\n\nDetails: {e}"
-        ))
-    })?;
+    let file = std::fs::File::open(src)
+        .map_err(|e| Error::Command(format!("Couldn't read the archive file.\n\nDetails: {e}")))?;
     match comp {
         TarCompression::Gzip => {
             let gz = flate2::read::GzDecoder::new(file);
@@ -274,9 +272,7 @@ fn unpack_tar<R: std::io::Read>(reader: R, dest: &Path, strip: usize) -> Result<
             ))
         })? {
             let mut entry = entry.map_err(|e| {
-                Error::Command(format!(
-                    "Couldn't extract the tar archive.\n\nDetails: {e}"
-                ))
+                Error::Command(format!("Couldn't extract the tar archive.\n\nDetails: {e}"))
             })?;
             // Security: the tar crate's unpack_in checks for traversal,
             // but we validate explicitly for a clear error message.
@@ -286,9 +282,7 @@ fn unpack_tar<R: std::io::Read>(reader: R, dest: &Path, strip: usize) -> Result<
             let rel = path.to_string_lossy().to_string();
             assert_safe_member(&rel)?;
             entry.unpack_in(&tmp).map_err(|e| {
-                Error::Command(format!(
-                    "Couldn't extract the tar archive.\n\nDetails: {e}"
-                ))
+                Error::Command(format!("Couldn't extract the tar archive.\n\nDetails: {e}"))
             })?;
         }
         Ok(())
@@ -557,4 +551,132 @@ fn link_bin(bin: &Path, dirs: &UserDirs, paths: &mut Vec<PathBuf>) -> Result<()>
     std::os::unix::fs::symlink(bin, &link)?;
     paths.push(link);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Build a zip in memory with the given compression, return the bytes.
+    fn make_zip(compression: zip::CompressionMethod) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(compression)
+                .unix_permissions(0o755);
+            w.start_file("myapp/run.sh", opts).unwrap();
+            w.write_all(b"#!/bin/sh\necho hi\n").unwrap();
+            w.start_file("myapp/readme.txt", opts).unwrap();
+            w.write_all(b"hello\n").unwrap();
+            w.finish().unwrap();
+        }
+        buf
+    }
+
+    fn write_temp(name: &str, data: &[u8]) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("dropin-test-{name}"));
+        std::fs::write(&p, data).unwrap();
+        p
+    }
+
+    #[test]
+    fn zip_deflate_lists_and_extracts() {
+        let p = write_temp("deflate.zip", &make_zip(zip::CompressionMethod::Deflated));
+        let members = list_members(&p).unwrap();
+        assert!(members.contains(&"myapp/run.sh".to_string()));
+        assert!(members.contains(&"myapp/readme.txt".to_string()));
+
+        let dest = std::env::temp_dir().join("dropin-test-deflate-out");
+        let _ = std::fs::remove_dir_all(&dest);
+        extract(&p, &dest, 1).unwrap();
+        // strip=1 removes the myapp/ prefix
+        assert!(dest.join("run.sh").exists());
+        assert!(dest.join("readme.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("readme.txt")).unwrap(),
+            "hello\n"
+        );
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn zip_zstd_lists_and_extracts() {
+        // zstd (method 93) is what broke `unzip` for the user's game archive.
+        let p = write_temp("zstd.zip", &make_zip(zip::CompressionMethod::Zstd));
+        let members = list_members(&p).unwrap();
+        assert!(members.contains(&"myapp/run.sh".to_string()));
+
+        let dest = std::env::temp_dir().join("dropin-test-zstd-out");
+        let _ = std::fs::remove_dir_all(&dest);
+        extract(&p, &dest, 1).unwrap();
+        assert!(dest.join("run.sh").exists());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("readme.txt")).unwrap(),
+            "hello\n"
+        );
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn zip_bzip2_lists_and_extracts() {
+        let p = write_temp("bzip2.zip", &make_zip(zip::CompressionMethod::Bzip2));
+        let members = list_members(&p).unwrap();
+        assert!(members.contains(&"myapp/run.sh".to_string()));
+
+        let dest = std::env::temp_dir().join("dropin-test-bzip2-out");
+        let _ = std::fs::remove_dir_all(&dest);
+        extract(&p, &dest, 0).unwrap();
+        assert!(dest.join("myapp/run.sh").exists());
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn zip_stored_lists_and_extracts() {
+        let p = write_temp("stored.zip", &make_zip(zip::CompressionMethod::Stored));
+        let members = list_members(&p).unwrap();
+        assert_eq!(members.len(), 2);
+        let dest = std::env::temp_dir().join("dropin-test-stored-out");
+        let _ = std::fs::remove_dir_all(&dest);
+        extract(&p, &dest, 0).unwrap();
+        assert!(dest.join("myapp/readme.txt").exists());
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn zip_traversal_blocked() {
+        // A zip with ../ should be refused, not extracted outside dest.
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file("../../../evil.txt", opts).unwrap();
+            w.write_all(b"evil\n").unwrap();
+            w.finish().unwrap();
+        }
+        let p = write_temp("traversal.zip", &buf);
+        // list_members must reject it
+        assert!(list_members(&p).is_err());
+        let dest = std::env::temp_dir().join("dropin-test-traversal-out");
+        let _ = std::fs::remove_dir_all(&dest);
+        assert!(extract(&p, &dest, 0).is_err());
+        // And nothing escaped
+        assert!(!std::env::temp_dir().join("evil.txt").exists());
+        let _ = std::fs::remove_dir_all(&dest);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn strip_path_works() {
+        assert_eq!(strip_path("a/b/c.txt", 0), Some("a/b/c.txt".into()));
+        assert_eq!(strip_path("a/b/c.txt", 1), Some("b/c.txt".into()));
+        assert_eq!(strip_path("a/b/c.txt", 2), Some("c.txt".into()));
+        assert_eq!(strip_path("a/b/c.txt", 3), None);
+        assert_eq!(strip_path("a/b/c.txt", 5), None);
+    }
 }

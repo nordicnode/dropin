@@ -644,7 +644,9 @@ pub fn rollback(name: &str) -> Result<String> {
         )));
     }
     snaps.sort();
-    let latest = snaps.pop().unwrap();
+    let latest = snaps
+        .pop()
+        .ok_or_else(|| Error::NotInstalled(format!("no snapshots for {}", inst.name)))?;
     let appimage = inst
         .files
         .iter()

@@ -336,23 +336,19 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
                 st.verified,
                 dropin_core::verify::Verification::Mismatch { .. }
             );
-            let wine_missing =
-                st.detection.format == dropin_core::detect::Format::WindowsExe
-                    && !st.is_game.unwrap_or(false)
-                    && !dropin_core::handlers::wine::have_wine();
-            let proton_missing =
-                st.detection.format == dropin_core::detect::Format::WindowsExe
-                    && st.is_game.unwrap_or(false)
-                    && !dropin_core::handlers::proton::have_umu();
+            let wine_missing = st.detection.format == dropin_core::detect::Format::WindowsExe
+                && !st.is_game.unwrap_or(false)
+                && !dropin_core::handlers::wine::have_wine();
+            let proton_missing = st.detection.format == dropin_core::detect::Format::WindowsExe
+                && st.is_game.unwrap_or(false)
+                && !dropin_core::handlers::proton::have_umu();
             let runner_blocked = wine_missing
                 || proton_missing
                 || st.wine_setup.is_some()
                 || st.proton_setup.is_some();
             let needs_trust = st.plan.needs_confirmation;
-            let can_install =
-                (!needs_trust || st.trust_checked) && checksum_ok && !runner_blocked;
-            clicked_install =
-                style::primary_button_enabled(ui, can_install, "Install").clicked();
+            let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !runner_blocked;
+            clicked_install = style::primary_button_enabled(ui, can_install, "Install").clicked();
             if style::ghost_button(ui, "Cancel").clicked() {
                 std::process::exit(0);
             }

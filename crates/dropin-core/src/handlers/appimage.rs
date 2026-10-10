@@ -14,7 +14,9 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
         steps: vec![
             format!(
                 "Move to ~/Applications/{}",
-                src.file_name().unwrap().to_string_lossy()
+                src.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "app".to_string())
             ),
             "Make executable".into(),
             "Extract embedded icon and menu entry".into(),

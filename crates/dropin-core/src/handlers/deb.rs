@@ -99,26 +99,8 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         .map(str::trim)
         .find(|m| m.starts_with("data.tar"))
         .ok_or_else(|| Error::Unsupported("no data.tar.* in deb".into()))?;
-    // tar needs the matching decompressor installed (zstd, xz, ...).
-    let need = if data_member.ends_with(".zst") {
-        Some("zstd")
-    } else if data_member.ends_with(".xz") {
-        Some("xz")
-    } else if data_member.ends_with(".bz2") {
-        Some("bzip2")
-    } else {
-        None
-    };
-    if let Some(tool) = need {
-        if !crate::have(tool) {
-            return Err(Error::Refused(format!(
-                "this .deb is compressed with {tool}, which isn't installed — \
-                 install it (e.g. `apt install {tool}`) and try again"
-            )));
-        }
-    }
-    // Dump the member to a temp file: tar sniffs compression reliably from a
-    // file, but not always from a pipe.
+    // Dump the member to a temp file, then extract with pure-Rust tar
+    // (handles gzip, bzip2, xz, zstd natively — no external tools needed).
     let tmp = std::env::temp_dir().join(format!("dropin-data-{}", std::process::id()));
     let dump = std::process::Command::new("sh")
         .args(["-c", &format!("ar p {s} {data_member} > {}", tmp.display())])
@@ -128,19 +110,16 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         return Err(Error::Command("reading deb payload failed".into()));
     }
     // Safety: list first, reject escapes.
-    let listing = crate::run("tar", &["-tf", tmp.to_str().unwrap()])?;
-    for line in listing.lines() {
+    let listing = super::tarball::list_members_tar(&tmp)?;
+    for line in &listing {
         assert_safe_member(line.trim_start_matches("./"))?;
     }
     std::fs::create_dir_all(&root)?;
-    let status = std::process::Command::new("tar")
-        .args(["-xf", tmp.to_str().unwrap(), "-C", root.to_str().unwrap()])
-        .status()
-        .map_err(|e| Error::Command(format!("extracting deb: {e}")))?;
+    let extract_result = super::tarball::extract_tar(&tmp, &root, 0);
     let _ = std::fs::remove_file(&tmp);
-    if !status.success() {
+    if let Err(e) = extract_result {
         let _ = std::fs::remove_dir_all(&root);
-        return Err(Error::Command("extracting deb payload failed".into()));
+        return Err(e);
     }
 
     let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(&root)

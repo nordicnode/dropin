@@ -247,8 +247,10 @@ fn nautilus(enable: bool) -> Result<()> {
     if !enable {
         remove_file(&path);
         // Nautilus byte-compiles extensions on load; don't leave ours behind.
-        let cache = path.parent().unwrap().join("__pycache__");
-        let _ = std::fs::remove_dir_all(cache);
+        if let Some(parent) = path.parent() {
+            let cache = parent.join("__pycache__");
+            let _ = std::fs::remove_dir_all(cache);
+        }
         return Ok(());
     }
     // MIME list baked in at install time; the GUI re-validates anyway.
