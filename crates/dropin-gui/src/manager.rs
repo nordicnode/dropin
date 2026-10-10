@@ -522,8 +522,8 @@ impl eframe::App for ManagerApp {
                         }
                     }
                 }
-                if ui.button("Check for updates").clicked() && !busy {
-                    self.run_op("Checking for updates", || {
+                if ui.button("Update all").clicked() && !busy {
+                    self.run_op("Updating apps", || {
                         let msg = match install::update(None, true) {
                             Ok(reports) => fmt_reports(reports),
                             Err(e) => format!("Update check failed: {e}"),
@@ -1096,6 +1096,14 @@ impl ManagerApp {
                         "• Double-click any installer file to open dropin\n\
                          • “Install as application” in your file manager's right-click menu\n\
                          • App menu entries for everything you install",
+                    );
+                    ui.add_space(10.0);
+                    style::section_title(ui, "Tips");
+                    style::dim_label(
+                        ui,
+                        "• Drag and drop files onto this window to install\n\
+                         • Click ⋯ on any app for details, env vars, and more\n\
+                         • Use Search (Ctrl+F) and filters to find apps quickly",
                     );
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
