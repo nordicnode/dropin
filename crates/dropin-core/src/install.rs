@@ -379,6 +379,10 @@ pub fn rollback(name: &str) -> Result<String> {
     // Keep the snapshot count bounded: two is enough to go back and forth.
     prune_snapshots(&snap_dir, 2);
 
+    // The restored snapshot's version is unknown; clear it so the next
+    // update check re-syncs instead of wrongly reporting "up to date".
+    ledger.clear_version(&slugify(&inst.name)).ok();
+
     Ok(format!(
         "rolled back to {}",
         latest.file_name().and_then(|n| n.to_str()).unwrap_or("snapshot")

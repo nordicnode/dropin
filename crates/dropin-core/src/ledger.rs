@@ -254,6 +254,19 @@ impl Ledger {
         Ok(())
     }
 
+    /// Clear the recorded version (e.g. after a rollback: the restored
+    /// snapshot's version is unknown, so the next update check re-syncs).
+    pub fn clear_version(&self, name: &str) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE installs SET version = NULL WHERE name = ?1",
+            params![name],
+        )?;
+        if n == 0 {
+            return Err(Error::NotInstalled(name.to_string()));
+        }
+        Ok(())
+    }
+
     /// Record the installed version (e.g. the GitHub tag just installed).
     pub fn set_version(&self, name: &str, version: &str) -> Result<()> {
         let n = self.conn.execute(
