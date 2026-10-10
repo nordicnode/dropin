@@ -18,3 +18,9 @@ libc = "0.2"
 sequoia-openpgp = { version = "1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 pelite = "0.10"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+# Pure-Rust archive handling: no external unzip/tar/7z needed.
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "zstd"] }
+tar = { version = "0.4", default-features = false }
+bzip2 = "0.4"
+zstd = "0.13"
+liblzma = "0.4"

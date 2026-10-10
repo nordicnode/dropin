@@ -327,6 +327,47 @@ impl eframe::App for DropinApp {
 
 /// Returns true when the user clicked Install.
 fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) -> bool {
+    // Scrollable content; the Install/Cancel buttons stay fixed at the bottom.
+    let mut clicked_install = false;
+    egui::TopBottomPanel::bottom("review_buttons").show_inside(ui, |ui| {
+        ui.add_space(12.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let checksum_ok = !matches!(
+                st.verified,
+                dropin_core::verify::Verification::Mismatch { .. }
+            );
+            let wine_missing =
+                st.detection.format == dropin_core::detect::Format::WindowsExe
+                    && !st.is_game.unwrap_or(false)
+                    && !dropin_core::handlers::wine::have_wine();
+            let proton_missing =
+                st.detection.format == dropin_core::detect::Format::WindowsExe
+                    && st.is_game.unwrap_or(false)
+                    && !dropin_core::handlers::proton::have_umu();
+            let runner_blocked = wine_missing
+                || proton_missing
+                || st.wine_setup.is_some()
+                || st.proton_setup.is_some();
+            let needs_trust = st.plan.needs_confirmation;
+            let can_install =
+                (!needs_trust || st.trust_checked) && checksum_ok && !runner_blocked;
+            clicked_install =
+                style::primary_button_enabled(ui, can_install, "Install").clicked();
+            if style::ghost_button(ui, "Cancel").clicked() {
+                std::process::exit(0);
+            }
+        });
+        ui.add_space(8.0);
+    });
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui_review_content(ui, file, st);
+        });
+    });
+    clicked_install
+}
+
+fn ui_review_content(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) {
     // Hero: app badge, name, version, format pill.
     ui.horizontal(|ui| {
         style::app_badge(ui, &st.plan.app_name, 64.0);
@@ -351,11 +392,6 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
 
     ui.add_space(4.0);
     style::faint_label(ui, &file.display().to_string());
-    ui.label(
-        egui::RichText::new(file.display().to_string())
-            .weak()
-            .small(),
-    );
     style::faint_label(ui, &format!("sha256 {}", st.sha));
     ui.add_space(2.0);
     match &st.verified {
@@ -384,7 +420,7 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
     style::section_title(ui, "What will happen");
     for step in &st.plan.steps {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("→").color(style::color::TEXT_FAINT));
+            ui.label(egui::RichText::new("•").color(style::color::TEXT_FAINT));
             style::dim_label(ui, step);
         });
     }
@@ -614,23 +650,6 @@ fn ui_review(ui: &mut egui::Ui, file: &std::path::Path, st: &mut ReviewState) ->
             );
         });
     }
-
-    ui.add_space(20.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let checksum_ok = !matches!(
-            st.verified,
-            dropin_core::verify::Verification::Mismatch { .. }
-        );
-        let runner_blocked =
-            wine_missing || proton_missing || st.wine_setup.is_some() || st.proton_setup.is_some();
-        let can_install = (!needs_trust || st.trust_checked) && checksum_ok && !runner_blocked;
-        let clicked = style::primary_button_enabled(ui, can_install, "Install").clicked();
-        if style::ghost_button(ui, "Cancel").clicked() {
-            std::process::exit(0);
-        }
-        clicked
-    })
-    .inner
 }
 
 fn ui_installing(ui: &mut egui::Ui) {

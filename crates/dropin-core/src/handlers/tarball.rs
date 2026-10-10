@@ -3,7 +3,7 @@
 
 use super::{assert_safe_member, sha256_of, InstallOptions, InstallOutcome, InstallPlan};
 use crate::desktop::{adopt_desktop_file, generate_entry, parse_desktop_file};
-use crate::{detect, have, slugify, Error, Result, UserDirs};
+use crate::{detect, slugify, Error, Result, UserDirs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -14,33 +14,15 @@ fn is_zip(src: &Path) -> bool {
 }
 
 /// List archive members (one path per line, no leading ./).
+/// Pure Rust: no external unzip/tar needed.
 fn list_members(src: &Path) -> Result<Vec<String>> {
-    let s = src
-        .to_str()
-        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
-    let out = if is_zip(src) {
-        if !have("unzip") {
-            return Err(Error::Command("The `unzip` tool isn't installed, so dropin can't read zip files. Install it with your package manager (e.g. `sudo apt install unzip`).".into()));
-        }
-        match crate::run("unzip", &["-Z", "-1", s]) {
-            Ok(o) => o,
-            Err(e) => {
-                let detail = e.to_string();
-                if detail.contains("cannot find") || detail.contains("No such file") {
-                    return Err(Error::Command(
-                        "Couldn't read the zip file. It may have been moved or deleted.".into(),
-                    ));
-                }
-                return Err(Error::Command(format!(
-                    "Couldn't read the zip file. It may be corrupted or not actually a zip archive.\n\nDetails: {detail}"
-                )));
-            }
-        }
+    let members = if is_zip(src) {
+        list_members_zip(src)?
     } else {
-        crate::run("tar", &["-tf", s])?
+        list_members_tar(src)?
     };
-    let mut members: Vec<String> = out
-        .lines()
+    let mut members: Vec<String> = members
+        .into_iter()
         .map(|l| l.trim_start_matches("./").to_string())
         .filter(|l| !l.is_empty())
         .collect();
@@ -52,70 +34,271 @@ fn list_members(src: &Path) -> Result<Vec<String>> {
     Ok(members)
 }
 
+fn list_members_zip(src: &Path) -> Result<Vec<String>> {
+    let file = std::fs::File::open(src).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the zip file. It may have been moved or deleted.\n\nDetails: {e}"
+        ))
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the zip file. It may be corrupted or not actually a zip archive.\n\nDetails: {e}"
+        ))
+    })?;
+    let mut members = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let file = archive.by_index(i).map_err(|e| {
+            Error::Command(format!("Couldn't read zip entry {i}.\n\nDetails: {e}"))
+        })?;
+        // Zip paths use forward slashes; the enclosed_name check happens
+        // in assert_safe_member via the caller.
+        members.push(file.name().to_string());
+    }
+    Ok(members)
+}
+
+/// Detect tar compression from magic bytes (more reliable than extension).
+#[derive(Clone, Copy, PartialEq)]
+enum TarCompression {
+    Gzip,
+    Bzip2,
+    Xz,
+    Zstd,
+    None,
+}
+
+fn detect_tar_compression(src: &Path) -> Result<TarCompression> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(src).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the archive file. It may have been moved or deleted.\n\nDetails: {e}"
+        ))
+    })?;
+    let mut magic = [0u8; 6];
+    let n = f.read(&mut magic).unwrap_or(0);
+    if n >= 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+        return Ok(TarCompression::Gzip);
+    }
+    if n >= 3 && magic[0] == b'B' && magic[1] == b'Z' && magic[2] == b'h' {
+        return Ok(TarCompression::Bzip2);
+    }
+    if n >= 6 && magic[0] == 0xfd && magic[1] == b'7' && magic[2] == b'z' && magic[3] == b'X' && magic[4] == b'Z' && magic[5] == 0x00 {
+        return Ok(TarCompression::Xz);
+    }
+    if n >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd {
+        return Ok(TarCompression::Zstd);
+    }
+    // No compression magic: assume plain tar.
+    Ok(TarCompression::None)
+}
+
+fn list_members_tar(src: &Path) -> Result<Vec<String>> {
+    let comp = detect_tar_compression(src)?;
+    let file = std::fs::File::open(src).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the archive file.\n\nDetails: {e}"
+        ))
+    })?;
+    let mut members = Vec::new();
+    match comp {
+        TarCompression::Gzip => {
+            let gz = flate2::read::GzDecoder::new(file);
+            collect_tar_members(gz, &mut members)?;
+        }
+        TarCompression::Bzip2 => {
+            let bz = bzip2::read::BzDecoder::new(file);
+            collect_tar_members(bz, &mut members)?;
+        }
+        TarCompression::Xz => {
+            let xz = liblzma::read::XzDecoder::new(file);
+            collect_tar_members(xz, &mut members)?;
+        }
+        TarCompression::Zstd => {
+            let zst = zstd::Decoder::new(file).map_err(|e| {
+                Error::Command(format!("Couldn't decompress zstd archive.\n\nDetails: {e}"))
+            })?;
+            collect_tar_members(zst, &mut members)?;
+        }
+        TarCompression::None => {
+            collect_tar_members(file, &mut members)?;
+        }
+    }
+    Ok(members)
+}
+
+fn collect_tar_members<R: std::io::Read>(
+    reader: R,
+    members: &mut Vec<String>,
+) -> Result<()> {
+    let mut archive = tar::Archive::new(reader);
+    for entry in archive.entries().map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the tar archive. It may be corrupted.\n\nDetails: {e}"
+        ))
+    })? {
+        let entry = entry.map_err(|e| {
+            Error::Command(format!(
+                "Couldn't read a tar entry. The archive may be corrupted.\n\nDetails: {e}"
+            ))
+        })?;
+        let path = entry.path().map_err(|e| {
+            Error::Command(format!("Couldn't read a tar entry path.\n\nDetails: {e}"))
+        })?;
+        members.push(path.to_string_lossy().to_string());
+    }
+    Ok(())
+}
+
 fn extract(src: &Path, dest: &Path, strip: usize) -> Result<()> {
-    let s = src
-        .to_str()
-        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
-    let d = dest
-        .to_str()
-        .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     std::fs::create_dir_all(dest)?;
     if is_zip(src) {
-        // unzip has no strip-components; emulate by extracting then moving.
-        // Note: no -q flag, so unzip's error messages reach stderr if it fails.
-        let tmp = dest.join(".dropin-unzip-tmp");
-        if tmp.exists() {
-            std::fs::remove_dir_all(&tmp)?;
-        }
-        std::fs::create_dir_all(&tmp)?;
-        let unzip_result = crate::run("unzip", &["-o", s, "-d", tmp.to_str().unwrap()]);
-        if let Err(e) = unzip_result {
-            let detail = e.to_string();
-            // unzip doesn't support zstd (method 93) and other modern methods.
-            // Try 7z as a fallback if available.
-            if detail.contains("unsupported compression method") && crate::have("7z") {
-                // Clean up partial extraction, then try 7z.
-                let _ = std::fs::remove_dir_all(&tmp);
-                std::fs::create_dir_all(&tmp)?;
-                if let Err(e7z) = crate::run("7z", &["x", s, &format!("-o{}", tmp.to_str().unwrap()), "-y"]) {
-                    let _ = std::fs::remove_dir_all(&tmp);
-                    return Err(Error::Command(format!(
-                        "Couldn't extract the zip file with 7z either. It may be corrupted.\n\nDetails: {}",
-                        e7z
-                    )));
-                }
-                // 7z succeeded, continue to move_stripped.
-            } else {
-                // Translate the technical failure into something actionable.
-                // Clean up the temp dir so a retry starts fresh.
-                let _ = std::fs::remove_dir_all(&tmp);
-                if detail.contains("unsupported compression method") {
-                    return Err(Error::Command(
-                        "This zip uses a compression method that isn't supported. Install `p7zip` (which handles more formats) and try again, or re-download the file.".into(),
-                    ));
-                }
-                if detail.contains("cannot find") || detail.contains("No such file") {
-                    return Err(Error::Command(
-                        "Couldn't read the zip file. It may have been moved or deleted.".into(),
-                    ));
-                }
-                if detail.contains("disk") || detail.contains("space") || detail.contains("No space") {
-                    return Err(Error::Command(
-                        "Not enough disk space to extract the zip file.".into(),
-                    ));
-                }
-                // Generic: likely a corrupted or unsupported archive.
-                return Err(Error::Command(format!(
-                    "Couldn't extract the zip file. It may be corrupted or incomplete — try downloading it again.\n\nDetails: {detail}"
-                )));
-            }
-        }
-        move_stripped(&tmp, dest, strip)?;
-        std::fs::remove_dir_all(&tmp)?;
+        extract_zip(src, dest, strip)?;
     } else {
-        let strip_arg = format!("--strip-components={strip}");
-        crate::run("tar", &["-xf", s, "-C", d, &strip_arg])?;
+        extract_tar(src, dest, strip)?;
     }
+    Ok(())
+}
+
+/// Extract a zip file in pure Rust (handles zstd, bzip2, lzma natively).
+/// Applies strip-components by skipping leading path components.
+fn extract_zip(src: &Path, dest: &Path, strip: usize) -> Result<()> {
+    let file = std::fs::File::open(src).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the zip file. It may have been moved or deleted.\n\nDetails: {e}"
+        ))
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't extract the zip file. It may be corrupted or incomplete — try downloading it again.\n\nDetails: {e}"
+        ))
+    })?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| {
+            Error::Command(format!(
+                "Couldn't extract the zip file (entry {i}).\n\nDetails: {e}"
+            ))
+        })?;
+        let name = file.name().to_string();
+        // Skip directory entries; we create parents as needed.
+        if name.ends_with('/') {
+            continue;
+        }
+        // Apply strip: skip entries that don't have enough components.
+        let stripped = strip_path(&name, strip);
+        let Some(rel) = stripped else {
+            continue;
+        };
+        // Safety: assert_safe_member already ran on list_members, but
+        // double-check here since extract can be called directly.
+        assert_safe_member(&rel)?;
+        let out_path = dest.join(&rel);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&out_path)?;
+        std::io::copy(&mut file, &mut out)?;
+        // Preserve Unix permissions if present.
+        #[cfg(unix)]
+        if let Some(mode) = file.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
+        }
+    }
+    Ok(())
+}
+
+/// Strip leading path components (like tar --strip-components).
+/// Returns None if the path has fewer components than strip.
+fn strip_path(path: &str, strip: usize) -> Option<String> {
+    if strip == 0 {
+        return Some(path.to_string());
+    }
+    let mut parts = path.split('/').filter(|p| !p.is_empty());
+    for _ in 0..strip {
+        parts.next()?;
+    }
+    let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(rest.join("/"))
+}
+
+fn extract_tar(src: &Path, dest: &Path, strip: usize) -> Result<()> {
+    let comp = detect_tar_compression(src)?;
+    let file = std::fs::File::open(src).map_err(|e| {
+        Error::Command(format!(
+            "Couldn't read the archive file.\n\nDetails: {e}"
+        ))
+    })?;
+    match comp {
+        TarCompression::Gzip => {
+            let gz = flate2::read::GzDecoder::new(file);
+            unpack_tar(gz, dest, strip)?;
+        }
+        TarCompression::Bzip2 => {
+            let bz = bzip2::read::BzDecoder::new(file);
+            unpack_tar(bz, dest, strip)?;
+        }
+        TarCompression::Xz => {
+            let xz = liblzma::read::XzDecoder::new(file);
+            unpack_tar(xz, dest, strip)?;
+        }
+        TarCompression::Zstd => {
+            let zst = zstd::Decoder::new(file).map_err(|e| {
+                Error::Command(format!("Couldn't decompress zstd archive.\n\nDetails: {e}"))
+            })?;
+            unpack_tar(zst, dest, strip)?;
+        }
+        TarCompression::None => {
+            unpack_tar(file, dest, strip)?;
+        }
+    }
+    Ok(())
+}
+
+fn unpack_tar<R: std::io::Read>(reader: R, dest: &Path, strip: usize) -> Result<()> {
+    let mut archive = tar::Archive::new(reader);
+    // We extract to a temp dir first, then move_stripped handles the
+    // strip-components logic (same as the old zip path).
+    let tmp = dest.join(".dropin-tar-tmp");
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)?;
+    }
+    std::fs::create_dir_all(&tmp)?;
+    let result = (|| -> Result<()> {
+        for entry in archive.entries().map_err(|e| {
+            Error::Command(format!(
+                "Couldn't read the tar archive. It may be corrupted.\n\nDetails: {e}"
+            ))
+        })? {
+            let mut entry = entry.map_err(|e| {
+                Error::Command(format!(
+                    "Couldn't extract the tar archive.\n\nDetails: {e}"
+                ))
+            })?;
+            // Security: the tar crate's unpack_in checks for traversal,
+            // but we validate explicitly for a clear error message.
+            let path = entry.path().map_err(|e| {
+                Error::Command(format!("Couldn't read a tar entry path.\n\nDetails: {e}"))
+            })?;
+            let rel = path.to_string_lossy().to_string();
+            assert_safe_member(&rel)?;
+            entry.unpack_in(&tmp).map_err(|e| {
+                Error::Command(format!(
+                    "Couldn't extract the tar archive.\n\nDetails: {e}"
+                ))
+            })?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return result;
+    }
+    move_stripped(&tmp, dest, strip)?;
+    std::fs::remove_dir_all(&tmp)?;
     Ok(())
 }
 
