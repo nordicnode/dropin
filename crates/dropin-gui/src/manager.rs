@@ -530,7 +530,7 @@ impl eframe::App for ManagerApp {
                     }
                 }
                 ui.add_space(4.0);
-                if ui.button("Update all").clicked() && !busy {
+                if style::secondary_button(ui, "Update all").clicked() && !busy {
                     self.run_op("Updating apps", || {
                         let msg = match install::update(None, true) {
                             Ok(reports) => fmt_reports(reports),

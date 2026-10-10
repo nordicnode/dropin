@@ -27,8 +27,6 @@ pub mod color {
     /// Primary accent: emerald, matches the dropin brand.
     /// Used sparingly: primary buttons, active states, links.
     pub const ACCENT: Color32 = Color32::from_rgb(16, 185, 129);
-    /// Accent hover: slightly brighter.
-    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(52, 211, 153);
     /// Accent text on dark: for links and highlights.
     pub const ACCENT_TEXT: Color32 = Color32::from_rgb(110, 231, 183);
     /// Primary text: near-white, not harsh.
