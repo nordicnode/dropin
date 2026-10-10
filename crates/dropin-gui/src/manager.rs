@@ -555,7 +555,7 @@ impl eframe::App for ManagerApp {
                         self.selected.clear();
                     }
                     ui.add_space(4.0);
-                    ui.menu_button("⋯", |ui| {
+                    style::tools_menu_button(ui, |ui| {
                         ui.set_min_width(180.0);
                         if ui.button("Doctor").clicked() && !busy {
                             self.doctor_issues = health::check();
@@ -772,10 +772,18 @@ impl eframe::App for ManagerApp {
                     ui.add_space(avail - right_width);
                 }
                 ui.horizontal(|ui| {
-                    // Select mode toggle.
-                    if ui.checkbox(&mut self.select_mode, "Select").changed() && !self.select_mode {
-                        self.selected.clear();
-                    }
+                    // Select mode toggle, vertically centered to match the dropdowns.
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(70.0, 32.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if ui.checkbox(&mut self.select_mode, "Select").changed()
+                                && !self.select_mode
+                            {
+                                self.selected.clear();
+                            }
+                        },
+                    );
                     ui.add_space(8.0);
                     // Sort.
                     egui::ComboBox::from_id_salt("sort_by")
@@ -961,10 +969,10 @@ impl ManagerApp {
                         style::faint_label(ui, &meta.join(" · "));
                     }
                 });
-                // Primary action: Launch. Everything else in the ⋯ menu.
+                // Primary action: Launch. Everything else in the … menu.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let is_script = app.format == "installer script";
-                    ui.menu_button("⋯", |ui| {
+                    style::tools_menu_button(ui, |ui| {
                         ui.set_min_width(160.0);
                         if !is_script && ui.button("Check for update").clicked() && !busy {
                             act = Act::Update;
@@ -1127,7 +1135,7 @@ impl ManagerApp {
                     style::dim_label(
                         ui,
                         "• Drag and drop files onto this window to install\n\
-                         • Click ⋯ on any app for details, env vars, and more\n\
+                         • Click … on any app for details, env vars, and more\n\
                          • Use Search (Ctrl+F) and filters to find apps quickly",
                     );
                     ui.add_space(12.0);

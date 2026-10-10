@@ -140,6 +140,16 @@ pub fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
+/// A "…" tools menu button, sized to match neighboring buttons.
+/// Uses a larger glyph so the button sizes naturally instead of
+/// collapsing to the tiny default.
+pub fn tools_menu_button<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    ui.menu_button(egui::RichText::new("…").size(20.0).strong(), add_contents)
+}
+
 /// A small pill badge, e.g. the format tag or version.
 pub fn badge(ui: &mut egui::Ui, text: &str, bg: egui::Color32) {
     egui::Frame::NONE
