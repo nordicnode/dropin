@@ -367,6 +367,17 @@ impl eframe::App for ManagerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
 
+        // Keyboard shortcuts: Ctrl+F focuses search, Escape clears it.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::F)) {
+            ctx.memory_mut(|m| {
+                m.request_focus(egui::Id::new("search_field"));
+            });
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !self.search.is_empty() {
+            self.search.clear();
+            self.selected.clear();
+        }
+
         // Drag-and-drop: files dropped on the window open install dialogs.
         let dropped: Vec<PathBuf> = ctx
             .input(|i| i.raw.dropped_files.clone())
@@ -421,8 +432,9 @@ impl eframe::App for ManagerApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.search)
-                            .hint_text("Search apps…")
-                            .desired_width(180.0),
+                            .hint_text("Search apps… (Ctrl+F)")
+                            .desired_width(180.0)
+                            .id(egui::Id::new("search_field")),
                     );
                     if resp.changed() {
                         self.selected.clear();
