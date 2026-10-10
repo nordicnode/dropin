@@ -201,7 +201,7 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
             Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("flatpak update failed: {e}")) },
         };
     }
-    // AppImage: needs an embedded update channel and the updater tool.
+    // AppImage: native zsync first, appimageupdatetool as fallback.
     if inst.format == "AppImage" {
         let channel = inst.update_info.clone().unwrap_or_default();
         if channel.is_empty() {
@@ -210,14 +210,6 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
                 status: UpdateStatus::Manual(
                     "no update channel embedded in this AppImage — check upstream manually".into(),
                 ),
-            };
-        }
-        if !have("appimageupdatetool") {
-            return UpdateReport {
-                name,
-                status: UpdateStatus::Manual(format!(
-                    "update channel available ({channel}) but `appimageupdatetool` is not installed"
-                )),
             };
         }
         let appimage = inst
@@ -230,17 +222,7 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
                 status: UpdateStatus::Failed("AppImage file not found in ledger".into()),
             };
         };
-        return match crate::run("appimageupdatetool", &["-O", appimage]) {
-            Ok(out) => {
-                let msg = out.trim().to_string();
-                if msg.contains("up to date") || msg.contains("nothing to do") {
-                    UpdateReport { name, status: UpdateStatus::UpToDate("already current".into()) }
-                } else {
-                    UpdateReport { name, status: UpdateStatus::Updated("updated in place".into()) }
-                }
-            }
-            Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("appimageupdatetool failed: {e}")) },
-        };
+        return update_appimage(inst, appimage, &channel);
     }
     // Everything else: dropin can't know upstream.
     let hint = match inst.format.as_str() {
@@ -253,6 +235,161 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
     UpdateReport {
         name,
         status: UpdateStatus::Manual(hint.into()),
+    }
+}
+
+/// Update one AppImage: native zsync delta first, `appimageupdatetool`
+/// as fallback. The old AppImage is snapshotted before any swap, so a bad
+/// update can be rolled back with `dropin rollback`.
+fn update_appimage(
+    inst: &crate::ledger::Install,
+    appimage: &str,
+    channel: &str,
+) -> UpdateReport {
+    let name = inst.name.clone();
+    let local = std::path::Path::new(appimage);
+
+    // Native path: resolve the channel, check the published SHA-1, and
+    // download only the blocks the local file is missing.
+    match crate::zsync::check(local, channel) {
+        Ok(Some(check)) => {
+            if check.up_to_date {
+                return UpdateReport {
+                    name,
+                    status: UpdateStatus::UpToDate("already current (zsync)".into()),
+                };
+            }
+            let dirs = UserDirs::new();
+            let snapshots = dirs.data.join("snapshots").join(slugify(&inst.name));
+            match crate::zsync::apply(local, &check, &snapshots, &mut |_, _| {}) {
+                Ok(report) => {
+                    return UpdateReport {
+                        name,
+                        status: UpdateStatus::Updated(format!(
+                            "zsync delta: {:.1} MiB fetched, {}/{} blocks reused",
+                            report.downloaded_bytes as f64 / 1048576.0,
+                            report.reused_blocks,
+                            report.total_blocks,
+                        )),
+                    };
+                }
+                Err(e) => {
+                    // Fall through to appimageupdatetool below; the local
+                    // file is untouched (apply only swaps after verifying).
+                    eprintln!("dropin: native zsync update failed ({e}); trying appimageupdatetool");
+                }
+            }
+        }
+        Ok(None) => {
+            // Channel type dropin doesn't speak natively; fall through.
+        }
+        Err(e) => {
+            eprintln!("dropin: zsync check failed ({e}); trying appimageupdatetool");
+        }
+    }
+
+    if !have("appimageupdatetool") {
+        return UpdateReport {
+            name,
+            status: UpdateStatus::Manual(format!(
+                "update channel available ({channel}) but neither native zsync nor `appimageupdatetool` could handle it"
+            )),
+        };
+    }
+    match crate::run("appimageupdatetool", &["-O", appimage]) {
+        Ok(out) => {
+            let msg = out.trim().to_string();
+            if msg.contains("up to date") || msg.contains("nothing to do") {
+                UpdateReport { name, status: UpdateStatus::UpToDate("already current".into()) }
+            } else {
+                UpdateReport { name, status: UpdateStatus::Updated("updated in place".into()) }
+            }
+        }
+        Err(e) => UpdateReport { name, status: UpdateStatus::Failed(format!("appimageupdatetool failed: {e}")) },
+    }
+}
+
+/// Restore the most recent pre-update snapshot of an AppImage.
+///
+/// The file being replaced is itself snapshotted first, so a rollback can
+/// be rolled back. Only AppImages get snapshots (they are the only format
+/// dropin updates in place).
+pub fn rollback(name: &str) -> Result<String> {
+    let ledger = Ledger::open()?;
+    let inst = ledger.get(&slugify(name))?;
+    if inst.format != "AppImage" {
+        return Err(Error::Refused(format!(
+            "rollback is only for AppImages ({} is {})",
+            inst.name, inst.format
+        )));
+    }
+    let appimage = inst
+        .files
+        .iter()
+        .find(|p| p.to_lowercase().ends_with(".appimage"))
+        .ok_or_else(|| Error::NotInstalled(format!("{} has no AppImage file", inst.name)))?;
+    let local = std::path::Path::new(appimage);
+
+    let dirs = UserDirs::new();
+    let snap_dir = dirs.data.join("snapshots").join(slugify(&inst.name));
+    let mut snaps: Vec<_> = std::fs::read_dir(&snap_dir)
+        .map_err(|_| Error::NotInstalled(format!("no snapshots for {}", inst.name)))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("bak"))
+        .collect();
+    if snaps.is_empty() {
+        return Err(Error::NotInstalled(format!("no snapshots for {}", inst.name)));
+    }
+    snaps.sort();
+    let latest = snaps.pop().unwrap();
+
+    // Snapshot the current file first: rolling back must not destroy it.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let file_name = local.file_name().and_then(|n| n.to_str()).unwrap_or("appimage");
+    let current_bak = snap_dir.join(format!("{file_name}-{secs}.bak"));
+    if local.exists() {
+        std::fs::rename(local, &current_bak)?;
+    }
+    std::fs::rename(&latest, local).map_err(|e| {
+        // Try to restore; report honestly if that fails too.
+        std::fs::rename(&current_bak, local).ok();
+        Error::Io(std::io::Error::other(
+            format!("restoring snapshot: {e} (current file preserved)"),
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(local)?.permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(local, perms)?;
+    }
+    // Keep the snapshot count bounded: two is enough to go back and forth.
+    prune_snapshots(&snap_dir, 2);
+
+    Ok(format!(
+        "rolled back to {}",
+        latest.file_name().and_then(|n| n.to_str()).unwrap_or("snapshot")
+    ))
+}
+
+/// Keep at most `keep` snapshots in `dir`, oldest first.
+fn prune_snapshots(dir: &std::path::Path, keep: usize) {
+    let mut snaps: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("bak"))
+        .collect();
+    snaps.sort();
+    while snaps.len() > keep {
+        let old = snaps.remove(0);
+        std::fs::remove_file(old).ok();
     }
 }
 

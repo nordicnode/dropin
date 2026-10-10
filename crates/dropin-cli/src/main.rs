@@ -46,6 +46,11 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Restore an AppImage to its pre-update snapshot.
+    Rollback {
+        /// Name of the app to roll back.
+        name: String,
+    },
     /// List apps installed by dropin.
     List,
     /// Check helper tools and environment.
@@ -154,6 +159,11 @@ fn run() -> dropin_core::Result<()> {
                 };
                 println!("{:12} {:20} {msg}", format!("[{tag}]"), r.name);
             }
+            Ok(())
+        }
+        Cmd::Rollback { name } => {
+            let msg = install::rollback(&name)?;
+            println!("{msg}.");
             Ok(())
         }
         Cmd::List => {

@@ -11,6 +11,7 @@ pub mod health;
 pub mod install;
 pub mod ledger;
 pub mod verify;
+pub mod zsync;
 
 /// Test-only helpers for tests that redirect HOME/DROPIN_HOME.
 ///
@@ -63,6 +64,8 @@ pub enum Error {
     Refused(String),
     #[error("not installed: {0}")]
     NotInstalled(String),
+    #[error("zsync: {0}")]
+    Zsync(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
