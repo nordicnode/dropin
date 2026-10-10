@@ -684,7 +684,8 @@ impl eframe::App for ManagerApp {
                 .filter(|a| {
                     let matches_query = query.is_empty()
                         || a.name.to_lowercase().contains(&query)
-                        || a.format.to_lowercase().contains(&query);
+                        || a.format.to_lowercase().contains(&query)
+                        || a.category.to_lowercase().contains(&query);
                     let matches_format = self
                         .format_filter
                         .as_ref()
@@ -1552,6 +1553,14 @@ impl ManagerApp {
                                 |ui| {
                                     if style::primary_button(ui, "Close").clicked() {
                                         close = true;
+                                    }
+                                    // Show in file manager button.
+                                    if let Some(root) = &app.install_root {
+                                        if style::ghost_button(ui, "Show files").clicked() {
+                                            let _ = std::process::Command::new("xdg-open")
+                                                .arg(root)
+                                                .spawn();
+                                        }
                                     }
                                 },
                             );
