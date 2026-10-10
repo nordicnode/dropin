@@ -508,10 +508,12 @@ impl eframe::App for ManagerApp {
 
         // ---- toolbar ----
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.add_space(4.0);
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("dropin").size(20.0).strong());
-                ui.add_space(16.0);
+                // Brand, with room to breathe.
+                ui.label(egui::RichText::new("dropin").size(22.0).strong());
+                ui.add_space(28.0);
+                // Primary actions.
                 if style::primary_button_enabled(ui, !busy, "Install app…").clicked() && !busy {
                     if let Some(paths) = rfd::FileDialog::new()
                         .set_title("Choose files to install")
@@ -522,6 +524,7 @@ impl eframe::App for ManagerApp {
                         }
                     }
                 }
+                ui.add_space(4.0);
                 if ui.button("Update all").clicked() && !busy {
                     self.run_op("Updating apps", || {
                         let msg = match install::update(None, true) {
@@ -534,52 +537,14 @@ impl eframe::App for ManagerApp {
                         }
                     });
                 }
-                if style::ghost_button(ui, "Doctor").clicked() && !busy {
-                    self.doctor_issues = health::check();
-                    self.doctor_open = true;
-                }
-                if style::ghost_button(ui, "Settings").clicked() {
-                    self.settings_open = true;
-                }
-                // Export/import and search, right-aligned. Reserve their width
-                // first so they never overlap the left buttons.
-                let right_width = 360.0;
+                // Right side: search and tools menu.
+                // Reserve width so the two sides never collide.
+                let right_width = 300.0;
                 let avail = ui.available_width();
                 if avail > right_width {
                     ui.add_space(avail - right_width);
                 }
                 ui.horizontal(|ui| {
-                    if style::ghost_button(ui, "Export").clicked() && !busy {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Export app list")
-                            .set_file_name("dropin-apps.json")
-                            .save_file()
-                        {
-                            if let Ok(apps) = install::list() {
-                                if let Ok(json) = serde_json::to_string_pretty(&apps) {
-                                    if std::fs::write(&path, json).is_ok() {
-                                        self.status = format!(
-                                            "Exported {} apps to {}.",
-                                            apps.len(),
-                                            path.display()
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if style::ghost_button(ui, "Import").clicked() && !busy {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Import app list")
-                            .pick_file()
-                        {
-                            self.status = format!(
-                                "Import from {}: reinstall apps from their original files.",
-                                path.display()
-                            );
-                        }
-                    }
-                    ui.add_space(8.0);
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.search)
                             .hint_text("Search apps… (Ctrl+F)")
@@ -589,8 +554,55 @@ impl eframe::App for ManagerApp {
                     if resp.changed() {
                         self.selected.clear();
                     }
+                    ui.add_space(4.0);
+                    ui.menu_button("⋯", |ui| {
+                        ui.set_min_width(180.0);
+                        if ui.button("Doctor").clicked() && !busy {
+                            self.doctor_issues = health::check();
+                            self.doctor_open = true;
+                            ui.close();
+                        }
+                        if ui.button("Settings").clicked() {
+                            self.settings_open = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Export app list").clicked() && !busy {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Export app list")
+                                .set_file_name("dropin-apps.json")
+                                .save_file()
+                            {
+                                if let Ok(apps) = install::list() {
+                                    if let Ok(json) = serde_json::to_string_pretty(&apps) {
+                                        if std::fs::write(&path, json).is_ok() {
+                                            self.status = format!(
+                                                "Exported {} apps to {}.",
+                                                apps.len(),
+                                                path.display()
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            ui.close();
+                        }
+                        if ui.button("Import app list").clicked() && !busy {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Import app list")
+                                .pick_file()
+                            {
+                                self.status = format!(
+                                    "Import from {}: reinstall apps from their original files.",
+                                    path.display()
+                                );
+                            }
+                            ui.close();
+                        }
+                    });
                 });
             });
+            ui.add_space(8.0);
             // Bulk actions bar, only when something is selected.
             if !self.selected.is_empty() {
                 ui.add_space(4.0);
@@ -752,7 +764,29 @@ impl eframe::App for ManagerApp {
                     .small()
                     .color(style::color::TEXT_FAINT),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Filters on the right. Reserve width so they never
+                // overlap the count on narrow windows.
+                let right_width = 420.0;
+                let avail = ui.available_width();
+                if avail > right_width {
+                    ui.add_space(avail - right_width);
+                }
+                ui.horizontal(|ui| {
+                    // Select mode toggle.
+                    if ui.checkbox(&mut self.select_mode, "Select").changed() && !self.select_mode {
+                        self.selected.clear();
+                    }
+                    ui.add_space(8.0);
+                    // Sort.
+                    egui::ComboBox::from_id_salt("sort_by")
+                        .selected_text(self.sort_by.label())
+                        .width(120.0)
+                        .show_ui(ui, |ui| {
+                            for opt in [SortBy::Name, SortBy::Size, SortBy::Recent] {
+                                ui.selectable_value(&mut self.sort_by, opt, opt.label());
+                            }
+                        });
+                    ui.add_space(8.0);
                     // Format filter.
                     let mut formats: Vec<String> = self
                         .apps
@@ -764,7 +798,7 @@ impl eframe::App for ManagerApp {
                     formats.sort();
                     egui::ComboBox::from_id_salt("format_filter")
                         .selected_text(self.format_filter.as_deref().unwrap_or("All formats"))
-                        .width(130.0)
+                        .width(120.0)
                         .show_ui(ui, |ui| {
                             if ui
                                 .selectable_value(&mut self.format_filter, None, "All formats")
@@ -781,8 +815,7 @@ impl eframe::App for ManagerApp {
                                 }
                             }
                         });
-                    ui.add_space(8.0);
-                    // Category filter.
+                    // Category filter (only when useful).
                     let mut categories: Vec<String> = self
                         .apps
                         .iter()
@@ -792,11 +825,12 @@ impl eframe::App for ManagerApp {
                         .collect();
                     categories.sort();
                     if categories.len() > 1 {
+                        ui.add_space(8.0);
                         egui::ComboBox::from_id_salt("category_filter")
                             .selected_text(
                                 self.category_filter.as_deref().unwrap_or("All categories"),
                             )
-                            .width(130.0)
+                            .width(120.0)
                             .show_ui(ui, |ui| {
                                 if ui
                                     .selectable_value(
@@ -821,21 +855,6 @@ impl eframe::App for ManagerApp {
                                     }
                                 }
                             });
-                        ui.add_space(8.0);
-                    }
-                    // Sort.
-                    egui::ComboBox::from_id_salt("sort_by")
-                        .selected_text(self.sort_by.label())
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            for opt in [SortBy::Name, SortBy::Size, SortBy::Recent] {
-                                ui.selectable_value(&mut self.sort_by, opt, opt.label());
-                            }
-                        });
-                    // Select mode toggle.
-                    ui.add_space(8.0);
-                    if ui.checkbox(&mut self.select_mode, "Select").changed() && !self.select_mode {
-                        self.selected.clear();
                     }
                 });
             });
