@@ -328,15 +328,20 @@ impl ManagerApp {
                     if app.has_snapshots && ui.button("Rollback").clicked() && !busy {
                         act = Act::Rollback;
                     }
-                    if ui.button("Update").clicked() && !busy {
+                    // Script installs have no update channel or GitHub tracking;
+                    // hiding those buttons avoids dead ends.
+                    let is_script = app.format == "installer script";
+                    if !is_script && ui.button("Update").clicked() && !busy {
                         act = Act::Update;
                     }
-                    if app.github_repo.is_some() {
-                        if ui.button("Untrack").clicked() && !busy {
-                            act = Act::Untrack;
+                    if !is_script {
+                        if app.github_repo.is_some() {
+                            if ui.button("Untrack").clicked() && !busy {
+                                act = Act::Untrack;
+                            }
+                        } else if ui.button("Track…").clicked() && !busy {
+                            act = Act::Track;
                         }
-                    } else if ui.button("Track…").clicked() && !busy {
-                        act = Act::Track;
                     }
                 });
             });
@@ -487,7 +492,6 @@ impl ManagerApp {
                 let purge = self.remove_purge;
                 self.run_op(&format!("Removing {name}"), move || {
                     let message = install::remove(&name, purge)
-                        .map(|_| format!("Removed '{name}'."))
                         .unwrap_or_else(|e| format!("Couldn't remove: {e}"));
                     OpDone { message, refresh_apps: true }
                 });

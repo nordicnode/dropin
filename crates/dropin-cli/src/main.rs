@@ -161,8 +161,8 @@ fn run() -> dropin_core::Result<()> {
             Ok(())
         }
         Cmd::Remove { name, purge } => {
-            install::remove(&name, purge)?;
-            println!("Removed '{name}'.");
+            let msg = install::remove(&name, purge)?;
+            println!("{msg}");
             Ok(())
         }
         Cmd::Update { name, all } => {

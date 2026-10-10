@@ -90,14 +90,14 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 /// Remove an installed app, reversing everything the ledger recorded.
 /// With `purge`, also moves leftover config/cache/data dirs to the trash
 /// (conservative heuristics; never deletes outright).
-pub fn remove(name: &str, purge: bool) -> Result<()> {
+pub fn remove(name: &str, purge: bool) -> Result<String> {
     let slug = slugify(name);
     let ledger = Ledger::open()?;
     let inst = ledger.get(&slug)?;
 
     if inst.external {
         // Delegate to the owning system.
-        if inst.format.starts_with("Flatpak") {
+        let msg = if inst.format.starts_with("Flatpak") {
             // Ledger name is the slugified app id; the original id had dots.
             // Try the source ref first, then fall back.
             let id = std::fs::read_to_string(&inst.source_path)
@@ -108,24 +108,25 @@ pub fn remove(name: &str, purge: bool) -> Result<()> {
                 })
                 .unwrap_or_else(|| slug.clone());
             handlers::flatpak::remove_external(&id)?;
+            format!("Removed '{}'.", inst.name)
         } else if inst.format == "installer script" {
             // Script installs are fully reversible: undo deletes what the
             // installer added and restores what it changed or deleted.
             match handlers::script::undo_install(&slug) {
-                Ok(msg) => println!("{msg}"),
-                Err(e) => println!(
-                    "note: '{}' was installed by a vendor script; {}",
-                    inst.name, e
+                Ok(m) => m,
+                Err(e) => format!(
+                    "Removed '{}' from the list, but couldn't undo everything: {e}",
+                    inst.name
                 ),
             }
         } else {
-            println!(
-                "note: '{}' was installed externally ({}); dropin removed its ledger entry, but files installed by the vendor script / system package manager remain — use that tool to fully uninstall",
+            format!(
+                "'{}' was installed externally ({}); removed its ledger entry, but files installed by the vendor script / system package manager remain — use that tool to fully uninstall",
                 inst.name, inst.format
-            );
-        }
+            )
+        };
         ledger.forget(&slug)?;
-        return Ok(());
+        return Ok(msg);
     }
 
     // Delete deepest paths first so parents are empty when removed.
@@ -163,7 +164,7 @@ pub fn remove(name: &str, purge: bool) -> Result<()> {
     }
 
     ledger.forget(&slug)?;
-    Ok(())
+    Ok(format!("Removed '{}'.", inst.name))
 }
 
 pub fn list() -> Result<Vec<crate::ledger::Install>> {
@@ -256,6 +257,7 @@ fn update_one(inst: &crate::ledger::Install) -> UpdateReport {
             "system packages update via your package manager (`apt upgrade`, `dnf upgrade`)"
         }
         s if s.contains("archive") => "tarballs have no update channel — re-download upstream",
+        "installer script" => "vendor scripts have no update channel — download the new installer and run it",
         _ => "no automated update source known — check upstream manually",
     };
     UpdateReport {
@@ -427,7 +429,15 @@ pub fn rollback(name: &str) -> Result<String> {
             .map(|e| e.path())
             .filter(|p| p.is_dir())
             .collect();
-        vers.sort();
+        // Oldest first by mtime (name sorting misorders "10.0.0" < "2.0.0").
+        vers.sort_by_key(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        });
         if vers.len() >= 2 {
             // Find what `active` currently points at, go to the previous.
             let active = app_dir.join("active");
@@ -646,6 +656,24 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
         };
     }
 
+    // If the release ships a detached signature for this asset, fetch it too
+    // so the continuity check below has something to verify.
+    for ext in ["asc", "sig"] {
+        let sig_name = format!("{}.{}", asset.name, ext);
+        if let Some(sig_asset) = release.assets.iter().find(|a| a.name == sig_name) {
+            let sig_dest = tmpdir.join(&sig_name);
+            if crate::zsync::fetch::download_to_file(
+                &sig_asset.download_url,
+                &sig_dest,
+                10 * 1024 * 1024,
+            )
+            .is_ok()
+            {
+                break;
+            }
+        }
+    }
+
     // Signature continuity: if the new download is signed, its key must
     // match the pinned key (or pin it now, TOFU, if none was pinned).
     match crate::signatures::check(&downloaded) {
@@ -816,7 +844,8 @@ fn migrate_to_generations(inst: &crate::ledger::Install, dirs: &UserDirs) -> cra
     Ok(())
 }
 
-/// Keep only the newest `keep` generation dirs, oldest first by name.
+/// Keep only the newest `keep` generation dirs, oldest first by mtime.
+/// (Name sorting misorders versions: "10.0.0" < "2.0.0" lexicographically.)
 fn prune_generations(app_dir: &std::path::Path, keep: usize) {
     let mut vers: Vec<_> = std::fs::read_dir(app_dir)
         .into_iter()
@@ -825,7 +854,14 @@ fn prune_generations(app_dir: &std::path::Path, keep: usize) {
         .map(|e| e.path())
         .filter(|p| p.is_dir())
         .collect();
-    vers.sort();
+    vers.sort_by_key(|p| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    });
     while vers.len() > keep {
         if let Some(old) = vers.first() {
             std::fs::remove_dir_all(old).ok();

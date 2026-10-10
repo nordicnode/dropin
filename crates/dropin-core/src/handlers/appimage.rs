@@ -164,24 +164,33 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 fn preflight_arch(file_name: &str) -> Result<()> {
     let lower = file_name.to_lowercase();
     let arch = std::env::consts::ARCH;
-    // (arch, aliases that mean "this arch")
-    let known: &[(&str, &[&str])] = &[
-        ("x86_64", &["x86_64", "amd64", "x64"]),
-        ("aarch64", &["aarch64", "arm64"]),
-        ("i686", &["i686", "i386", "x86"]),
-    ];
-    // If the name mentions a *different* known arch, refuse.
-    for (other_arch, aliases) in known {
-        if *other_arch == arch {
-            continue;
-        }
-        if aliases.iter().any(|a| lower.contains(a)) {
-            return Err(Error::Refused(format!(
-                "this AppImage looks built for {other_arch}, but this machine is {arch}"
-            )));
-        }
+
+    // What arch does the filename claim? Order matters: check x86_64
+    // before the bare "x86" so the substring doesn't false-positive.
+    let claims = if lower.contains("x86_64") || lower.contains("amd64") || word_contains(&lower, "x64") {
+        Some("x86_64")
+    } else if lower.contains("aarch64") || lower.contains("arm64") {
+        Some("aarch64")
+    } else if lower.contains("i686") || lower.contains("i386") || lower.contains("x86") {
+        // Reached only when "x86_64" wasn't found, so bare "x86" means 32-bit.
+        Some("i686")
+    } else {
+        None
+    };
+
+    match claims {
+        Some(claimed) if claimed != arch => Err(Error::Refused(format!(
+            "this AppImage looks built for {claimed}, but this machine is {arch}"
+        ))),
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+/// True when `word` appears as a standalone token (split on non-alphanumerics).
+fn word_contains(haystack: &str, word: &str) -> bool {
+    haystack
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| t == word)
 }
 
 /// Pre-flight: ensure enough free disk space (need ~2x the file size).
@@ -225,11 +234,18 @@ fn human_size(n: u64) -> String {
 }
 
 /// Atomically point `link` at `target` via rename (POSIX atomic).
+/// Uses a relative target when it's inside the link's directory, so the
+/// link survives the home directory being moved or renamed.
 pub fn flip_symlink(link: &Path, target: &Path) -> Result<()> {
     let tmp = link.with_extension("tmp");
     let _ = std::fs::remove_file(&tmp);
+    let rel = link
+        .parent()
+        .and_then(|dir| target.strip_prefix(dir).ok())
+        .map(|r| r.to_path_buf());
+    let link_target = rel.as_deref().unwrap_or(target);
     #[cfg(unix)]
-    std::os::unix::fs::symlink(target, &tmp)?;
+    std::os::unix::fs::symlink(link_target, &tmp)?;
     std::fs::rename(&tmp, link)?;
     Ok(())
 }
@@ -577,7 +593,13 @@ mod safe_extract_tests {
             let active = app_dir.join("active");
             assert!(active.is_symlink(), "active symlink exists");
             let target = std::fs::read_link(&active).unwrap();
-            assert!(target.exists(), "active target exists");
+            // Relative links resolve against the link's directory.
+            let abs_target = if target.is_absolute() {
+                target.clone()
+            } else {
+                active.parent().unwrap().join(&target)
+            };
+            assert!(abs_target.exists(), "active target exists");
             assert!(target.to_string_lossy().ends_with(".AppImage"));
             // Desktop entry Exec points at `active`.
             let desktop = home.join(format!(

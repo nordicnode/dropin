@@ -434,14 +434,15 @@ fn prune_logs(tag: &str) {
 // Snapshots, backup, undo
 // ---------------------------------------------------------------------------
 
-/// path -> (size, mtime). Symlinks tracked by presence.
-type FileMap = BTreeMap<PathBuf, (u64, i64)>;
+/// path -> (size, mtime_nanos). Symlinks tracked by presence.
+/// Nanosecond mtime: second granularity misses same-second edits.
+type FileMap = BTreeMap<PathBuf, (u64, i128)>;
 
-fn mtime_secs(m: &std::fs::Metadata) -> i64 {
+fn mtime_nanos(m: &std::fs::Metadata) -> i128 {
     m.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_nanos() as i128)
         .unwrap_or(0)
 }
 
@@ -458,7 +459,7 @@ fn snapshot_writable() -> FileMap {
             let ft = entry.file_type();
             if ft.is_file() {
                 if let Ok(m) = entry.metadata() {
-                    map.insert(p, (m.len(), mtime_secs(&m)));
+                    map.insert(p, (m.len(), mtime_nanos(&m)));
                 }
             } else if ft.is_symlink() {
                 map.insert(p, (0, 0));
@@ -482,6 +483,12 @@ fn undo_path(slug: &str) -> PathBuf {
 
 /// Hardlink every snapshotted file into `dest` (same names, relative to $HOME).
 /// Hardlinks are instant and share disk space until the installer changes them.
+///
+/// Limitation: protects against deleted and atomically-replaced files (the
+/// rename breaks the hardlink, keeping our copy). It does NOT protect against
+/// in-place byte edits through the original path — those change the backup's
+/// copy too. Installers overwhelmingly use atomic replace, so this covers
+/// the realistic cases.
 fn hardlink_snapshot(map: &FileMap, dest: &Path) -> Result<()> {
     let home = crate::home_dir();
     for path in map.keys() {
@@ -758,6 +765,7 @@ fn ask(prompt: &str) -> Result<bool> {
     io::stdout().flush()?;
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
+    println!();
     Ok(answer.trim().eq_ignore_ascii_case("y"))
 }
 
@@ -958,6 +966,63 @@ mod tests {
         assert_eq!(d.added, vec![PathBuf::from("/a/new")]);
         assert_eq!(d.removed, vec![PathBuf::from("/a/gone")]);
         assert_eq!(d.modified, vec![PathBuf::from("/a/chg")]);
+    }
+
+    #[test]
+    fn undo_roundtrip() {
+        let d = tmpdir("undo");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            // Set up: a file the "installer" will delete, one it will modify.
+            let bin = home.join(".local/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let keep = bin.join("keep");
+            let gone = bin.join("gone");
+            let chg = bin.join("chg");
+            std::fs::write(&keep, "keep").unwrap();
+            std::fs::write(&gone, "gone").unwrap();
+            std::fs::write(&chg, "original").unwrap();
+
+            let before = snapshot_writable();
+            let backup_dir = backup_root().join("test-undo");
+            std::fs::create_dir_all(&backup_dir).unwrap();
+            hardlink_snapshot(&before, &backup_dir).unwrap();
+
+            // Simulate installer: delete one, atomically replace one
+            // (rename breaks the hardlink, preserving the backup — this is
+            // what real installers do; in-place byte edits are not covered),
+            // and add one.
+            std::fs::remove_file(&gone).unwrap();
+            let tmp = bin.join("chg.tmp");
+            std::fs::write(&tmp, "modified").unwrap();
+            std::fs::rename(&tmp, &chg).unwrap();
+            let added = bin.join("newfile");
+            std::fs::write(&added, "new").unwrap();
+
+            let after = snapshot_writable();
+            let diff = diff_maps(&before, &after);
+            let report = ScriptReport {
+                success: true,
+                added: diff.added.clone(),
+                removed: diff.removed.clone(),
+                modified: diff.modified.clone(),
+                log_path: PathBuf::from("/tmp/x.log"),
+                failure_hint: None,
+                net_allowed: false,
+            };
+            write_undo_record("testapp", &report, &backup_dir).unwrap();
+
+            // Undo and verify.
+            let msg = undo_install("testapp").unwrap();
+            assert!(keep.exists(), "untouched file still there");
+            assert!(gone.exists(), "deleted file restored");
+            assert_eq!(std::fs::read_to_string(&gone).unwrap(), "gone");
+            assert_eq!(std::fs::read_to_string(&chg).unwrap(), "original", "modified file restored");
+            assert!(!added.exists(), "added file removed");
+            assert!(msg.contains("Undid"), "plain summary: {msg}");
+            assert!(!undo_path("testapp").exists(), "sidecar cleaned up");
+        });
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
