@@ -2,7 +2,7 @@
   <img src="assets/logo-v3.png" width="320" alt="dropin logo">
 </p>
 
-<p align="center"><strong>Download it. Double-click it. Done.</strong></p>
+<p align="center"><strong>Point it at a file. It's installed.</strong></p>
 
 <p align="center">
   <a href="https://github.com/nordicnode/dropin/actions/workflows/ci.yml"><img src="https://github.com/nordicnode/dropin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -14,8 +14,8 @@
 
 <p align="center">
   The universal Linux installer for all the weird files the internet hands you.<br>
-  AppImages, <code>.deb</code>s, <code>.rpm</code>s, tarballs, Flatpaks, installer scripts.
-  One double-click, no terminal, no root, and everything tracked<br>
+  AppImages, <code>.deb</code>s, <code>.rpm</code>s, tarballs, Flatpaks, installer scripts, Windows games.
+  One command, no root, and everything tracked<br>
   so uninstalls are actually clean.
 </p>
 
@@ -33,32 +33,14 @@ $ # now hand-write a .desktop file for the menu, find an icon, hope you
 $ # remember all of this when you want it gone
 ```
 
-With dropin you just double-click the file. A dialog shows you exactly what it's about to do. You click Install. It's in your menu. Months later, when you're done with it, the manager removes every trace.
+With dropin you just point it at the file. It shows you exactly what it's about to do. You confirm. It's installed with a menu entry and clean uninstall tracking. Months later, when you're done with it, `dropin remove` deletes every trace.
 
 ## See it in action
 
-The manager is home base: every app you install, with search, filters, and one-click updates:
-
-<p align="center">
-  <img src="assets/screenshot-manager.png" width="700" alt="dropin manager window showing installed apps">
-</p>
-
-Double-click any installer file and dropin shows its whole plan up front, integrity check included:
-
-<p align="center">
-  <img src="assets/screenshot-install-dialog.png" width="480" alt="dropin install dialog on a real AppImage">
-</p>
-
-Prefer the terminal? Same deal. Dry-run, verified install, and the ledger keeping score:
+Dry-run, verified install, and the ledger keeping score:
 
 <p align="center">
   <img src="assets/screenshot-terminal-install.png" width="700" alt="dropin terminal workflow: info, install, list">
-</p>
-
-One click later it's in your menu, and removing it later is just as easy:
-
-<p align="center">
-  <img src="assets/screenshot-done.png" width="480" alt="dropin install complete">
 </p>
 
 ## What it handles
@@ -71,7 +53,7 @@ One click later it's in your menu, and removing it later is just as easy:
 | `.tar.gz` / `.tar.xz` / `.zip` | Actually looks at what's inside. Real app? It gets installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken "install" |
 | `.flatpakref` / `.flatpak` | Hands it to `flatpak install --user` |
 | `.sh` / `.run` / `.bin` | Tells you it's an executable vendor script and won't run it until you explicitly say so |
-| `.exe` / `.msi` | Zero-friction: auto-detects games vs apps. Games run with GE-Proton via umu-launcher (automatic per-game fixes from umu-database, no Steam needed). Apps run with Wine. One-click setup for both, isolated prefix per app, tracked for clean removal |
+| `.exe` / `.msi` | Zero-friction: auto-detects games vs apps. Games run with GE-Proton via umu-launcher (automatic per-game fixes from umu-database, no Steam needed). Apps run with Wine. Automatic setup for both via `dropin setup-wine` / `dropin setup-proton`, isolated prefix per app, tracked for clean removal |
 
 Detection goes by magic bytes, not file extensions. Rename a `.deb` to `.txt` and dropin still knows what it's looking at.
 
@@ -138,8 +120,7 @@ dropin export <file>      # back up the app list to JSON
 dropin import <file>      # review an exported app list
 dropin setup-wine         # install Wine automatically for Windows apps
 dropin setup-proton       # install umu-launcher + GE-Proton automatically for games
-dropin integrate          # double-click plus file-manager plus menu integration
-dropin unintegrate        # remove all desktop integration
+dropin adopt <dir>        # add an already-installed game folder (Lutris-style)
 ```
 
 ## Why not…
@@ -158,7 +139,7 @@ The closest thing out there is [exeify](https://github.com/scdouglas1999/exeify)
 
 - **Your home directory is yours.** Dropin installs to user scope and never asks for root unless you explicitly choose a system install.
 - **Show before doing.** `dropin info` always lays out the plan first. Installer scripts need your explicit okay.
-- **Fully offline core.** No AI, no accounts, no telemetry, no phoning home. The only network use is what you explicitly approve: GitHub release checks for apps you choose to track (only when you open the manager, ETag-cached, toggleable), and one-time internet access for a sandboxed installer when you allow it.
+- **Fully offline core.** No AI, no accounts, no telemetry, no phoning home. The only network use is what you explicitly approve: GitHub release checks for apps you choose to track (ETag-cached, toggleable), and one-time internet access for a sandboxed installer when you allow it.
 - **Rootless by default.** Scripts run sandboxed without admin rights; system installs are opt-in.
 - **Honest about limits.** If dropin can't update something automatically, it says so instead of pretending.
 
