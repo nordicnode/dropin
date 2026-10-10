@@ -674,6 +674,26 @@ enum DoneAction {
 /// likely blocker.
 fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
     let mut action = DoneAction::None;
+    // Fixed button bar at bottom.
+    egui::TopBottomPanel::bottom("done_buttons").show_inside(ui, |ui| {
+        ui.add_space(12.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if style::primary_button(ui, "Close").clicked() {
+                action = DoneAction::Close;
+            }
+        });
+        ui.add_space(8.0);
+    });
+    // Scrollable content.
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui_done_content(ui, res, &mut action);
+        });
+    });
+    action
+}
+
+fn ui_done_content(ui: &mut egui::Ui, res: &InstallResult, action: &mut DoneAction) {
     ui.add_space(16.0);
     if let Some(rep) = &res.script_report {
         // Plain-language report.
@@ -717,7 +737,7 @@ fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
         if !rep.success && net_hint {
             ui.add_space(12.0);
             if style::primary_button(ui, "Try again with internet allowed").clicked() {
-                action = DoneAction::RetryWithNet;
+                *action = DoneAction::RetryWithNet;
             }
         }
         // Log viewer.
@@ -761,11 +781,4 @@ fn ui_done(ui: &mut egui::Ui, res: &InstallResult) -> DoneAction {
         ui.add_space(10.0);
         style::dim_label(ui, &res.message);
     }
-    ui.add_space(20.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if style::primary_button(ui, "Close").clicked() {
-            action = DoneAction::Close;
-        }
-    });
-    action
 }
