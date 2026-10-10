@@ -973,7 +973,7 @@ impl ManagerApp {
         }
     }
 
-    /// Complete the adoption.
+    /// Complete the adoption (in a background thread with progress indicator).
     fn do_adopt(&mut self) {
         let Some(dir) = self.adopt_dir.clone() else {
             return;
@@ -987,21 +987,24 @@ impl ManagerApp {
                 Some(self.adopt_name.trim().to_string())
             },
         };
-        match dropin_core::adopt::adopt(&dir, &opts) {
-            Ok(outcome) => {
-                self.status = format!("Added {} to your library.", outcome.name);
-                self.adopt_dir = None;
-                self.adopt_scan = None;
-                self.adopt_exe = None;
-                self.adopt_is_game = None;
-                self.adopt_name.clear();
-                self.adopt_error = None;
-                self.refresh();
+        // Close the dialog; the busy spinner shows progress.
+        self.adopt_dir = None;
+        self.adopt_scan = None;
+        self.adopt_exe = None;
+        self.adopt_is_game = None;
+        self.adopt_name.clear();
+        self.adopt_error = None;
+
+        self.run_op("Adding game", move || {
+            let message = match dropin_core::adopt::adopt(&dir, &opts) {
+                Ok(outcome) => format!("Added {} to your library.", outcome.name),
+                Err(e) => format!("Couldn't add game: {e}"),
+            };
+            OpDone {
+                message,
+                refresh_apps: true,
             }
-            Err(e) => {
-                self.adopt_error = Some(format!("Couldn't add game: {e}"));
-            }
-        }
+        });
     }
 
     /// Cancel the adoption flow.
@@ -1492,10 +1495,8 @@ impl ManagerApp {
             }
             if confirm {
                 self.do_adopt();
-                // do_adopt clears adopt_dir on success; on error the dialog stays open.
-                if self.adopt_dir.is_none() {
-                    open = false;
-                }
+                // do_adopt closes the dialog and runs in the background.
+                open = false;
             }
             if !open {
                 self.cancel_adopt();
