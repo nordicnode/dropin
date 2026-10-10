@@ -451,7 +451,9 @@ fn sniff_dir(dir: &Path) -> Sniff {
         {
             desktop_files.push(rel.clone());
         }
-        if entry.file_type().is_file() && is_elf_executable(entry.path()) {
+        if entry.file_type().is_file()
+            && (is_elf_executable(entry.path()) || is_windows_exe(entry.path()))
+        {
             executables.push(rel);
         }
     }
@@ -491,6 +493,26 @@ fn is_elf_executable(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|m| m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+fn is_windows_exe(path: &Path) -> bool {
+    // Extension check (fast path).
+    if path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    // MZ magic (for exes without the extension).
+    let mut buf = [0u8; 2];
+    use std::io::Read;
+    if let Ok(mut f) = std::fs::File::open(path) {
+        if f.read_exact(&mut buf).is_ok() && buf == *b"MZ" {
+            return true;
+        }
+    }
+    false
 }
 
 fn looks_like_app(sniff: &Sniff) -> bool {
@@ -572,6 +594,18 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         // Move the extracted temp dir to the final location (fast rename,
         // no re-extraction).
         std::fs::rename(&tmp_dir, &root)?;
+
+        // Check if this is a Windows game (main executable is a .exe).
+        // If so, set up Wine/Proton instead of treating it as a Linux app.
+        let main_bin_rel = choose_binary(&sniff, &slug, &d.name_hint);
+        let is_windows_game = main_bin_rel
+            .as_ref()
+            .map(|rel| is_windows_exe(&root.join(rel)))
+            .unwrap_or(false);
+
+        if is_windows_game {
+            return install_windows_game(&root, &main_bin_rel.unwrap(), &slug, &d.name_hint, opts);
+        }
         let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(&root)
             .into_iter()
             .flatten()
@@ -669,6 +703,133 @@ fn link_bin(bin: &Path, dirs: &UserDirs, paths: &mut Vec<PathBuf>) -> Result<()>
     std::os::unix::fs::symlink(bin, &link)?;
     paths.push(link);
     Ok(())
+}
+
+/// Install a Windows game from an extracted archive.
+/// The game files are already in `root`; we set up Wine/Proton and create launchers.
+fn install_windows_game(
+    root: &Path,
+    main_exe_rel: &str,
+    slug: &str,
+    name_hint: &str,
+    opts: &InstallOptions,
+) -> Result<InstallOutcome> {
+    use crate::handlers::proton::Runner;
+
+    let main_exe = root.join(main_exe_rel);
+    // Pick Wine vs Proton (same logic as the Wine handler).
+    let runner = crate::handlers::wine::pick_runner(&main_exe, name_hint, opts);
+
+    // Check the runner is available.
+    match runner {
+        Runner::Wine => {
+            if !crate::handlers::wine::have_wine() {
+                return Err(Error::Refused(
+                    "Wine isn't installed, so Windows games can't run yet.\n\
+                     Run `dropin setup-wine` or use the GUI to set it up automatically."
+                        .into(),
+                ));
+            }
+        }
+        Runner::Proton => {
+            if !crate::handlers::proton::have_umu() {
+                return Err(Error::Refused(
+                    "Proton support isn't set up yet.\n\
+                     Run `dropin setup-proton` or use the GUI to set it up automatically."
+                        .into(),
+                ));
+            }
+        }
+    }
+
+    // Set up the prefix.
+    let prefix = crate::handlers::wine::prefix_for(slug);
+    if !prefix.exists() {
+        std::fs::create_dir_all(&prefix)?;
+        if runner == Runner::Wine {
+            // Initialize Wine prefix (umu/Proton creates it on demand).
+            // We use the wine binary directly here.
+            if let Some(wine_bin) = crate::handlers::wine_setup::wine_binary() {
+                let status = std::process::Command::new(wine_bin)
+                    .env("WINEPREFIX", &prefix)
+                    .arg("wineboot")
+                    .arg("--init")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map_err(|e| Error::Command(format!("couldn't initialize Wine prefix: {e}")))?;
+                if !status.success() {
+                    let _ = std::fs::remove_dir_all(&prefix);
+                    return Err(Error::Command("Wine prefix initialization failed".into()));
+                }
+            }
+        }
+    }
+
+    // Collect all files for the ledger.
+    let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(root)
+        .into_iter()
+        .flatten()
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    paths.push(prefix.clone());
+
+    // Create .desktop entry.
+    let desktop_path = match runner {
+        Runner::Proton => {
+            let (env, argv) =
+                crate::handlers::proton::proton_launch_cmd(&prefix, &main_exe, name_hint);
+            let env_str = env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let argv_str = argv
+                .iter()
+                .map(|a| format!("\"{a}\""))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let entry = crate::desktop::DesktopEntry {
+                name: name_hint.to_string(),
+                exec: format!("env {env_str} {argv_str}"),
+                icon: None,
+                comment: None,
+                categories: Some("Game;".into()),
+                terminal: false,
+            };
+            entry.write(slug)?
+        }
+        Runner::Wine => {
+            let entry = crate::desktop::DesktopEntry {
+                name: name_hint.to_string(),
+                exec: format!(
+                    "env WINEPREFIX=\"{}\" wine \"{}\"",
+                    prefix.display(),
+                    main_exe.display()
+                ),
+                icon: None,
+                comment: None,
+                categories: Some("Game;".into()),
+                terminal: false,
+            };
+            entry.write(slug)?
+        }
+    };
+    paths.push(desktop_path);
+
+    // Symlink the .exe name into ~/.local/bin (for CLI launch).
+    // Note: can't execute directly, but `dropin launch` will handle it.
+    // We skip the bin symlink for Windows games (the .exe isn't directly runnable).
+
+    Ok(InstallOutcome {
+        name: slug.to_string(),
+        version: None,
+        install_root: Some(root.to_path_buf()),
+        paths,
+        external: false,
+        update_info: None,
+    })
 }
 
 #[cfg(test)]

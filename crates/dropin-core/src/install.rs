@@ -115,6 +115,32 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
                     inst.name
                 ),
             }
+        } else if inst.format == "adopted" {
+            // Adopted games: delete dropin's own files (.desktop, bin symlink,
+            // wine prefix) but leave the user's game files in place.
+            let dirs = UserDirs::new();
+            let mut removed = 0;
+            for f in &inst.files {
+                let p = PathBuf::from(f);
+                // Only delete files in dropin's managed locations.
+                let in_managed = p.starts_with(&dirs.desktop_entries)
+                    || p.starts_with(&dirs.bin)
+                    || p.starts_with(dirs.data.join("wine-prefixes"));
+                if in_managed && remove_path(&p).is_ok() {
+                    removed += 1;
+                }
+            }
+            let game_dir = inst
+                .install_root
+                .as_ref()
+                .map(|r| PathBuf::from(r).display().to_string())
+                .unwrap_or_else(|| "its folder".to_string());
+            format!(
+                "Removed '{}' from dropin (deleted {removed} launcher file{}). Your game files in {} were left in place.",
+                inst.name,
+                if removed == 1 { "" } else { "s" },
+                game_dir
+            )
         } else {
             format!(
                 "'{}' was installed externally ({}); removed its ledger entry, but files installed by the vendor script / system package manager remain — use that tool to fully uninstall",
