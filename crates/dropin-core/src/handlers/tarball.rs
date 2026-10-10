@@ -20,9 +20,22 @@ fn list_members(src: &Path) -> Result<Vec<String>> {
         .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let out = if is_zip(src) {
         if !have("unzip") {
-            return Err(Error::Command("`unzip` is not installed".into()));
+            return Err(Error::Command("The `unzip` tool isn't installed, so dropin can't read zip files. Install it with your package manager (e.g. `sudo apt install unzip`).".into()));
         }
-        crate::run("unzip", &["-Z", "-1", s])?
+        match crate::run("unzip", &["-Z", "-1", s]) {
+            Ok(o) => o,
+            Err(e) => {
+                let detail = e.to_string();
+                if detail.contains("cannot find") || detail.contains("No such file") {
+                    return Err(Error::Command(
+                        "Couldn't read the zip file. It may have been moved or deleted.".into(),
+                    ));
+                }
+                return Err(Error::Command(format!(
+                    "Couldn't read the zip file. It may be corrupted or not actually a zip archive.\n\nDetails: {detail}"
+                )));
+            }
+        }
     } else {
         crate::run("tar", &["-tf", s])?
     };
@@ -49,12 +62,34 @@ fn extract(src: &Path, dest: &Path, strip: usize) -> Result<()> {
     std::fs::create_dir_all(dest)?;
     if is_zip(src) {
         // unzip has no strip-components; emulate by extracting then moving.
+        // Note: no -q flag, so unzip's error messages reach stderr if it fails.
         let tmp = dest.join(".dropin-unzip-tmp");
         if tmp.exists() {
             std::fs::remove_dir_all(&tmp)?;
         }
         std::fs::create_dir_all(&tmp)?;
-        crate::run("unzip", &["-q", "-o", s, "-d", tmp.to_str().unwrap()])?;
+        if let Err(e) = crate::run("unzip", &["-o", s, "-d", tmp.to_str().unwrap()]) {
+            // Translate the technical failure into something actionable.
+            // Common causes: corrupted/incomplete download, disk full, or
+            // an archive format unzip can't handle.
+            let detail = e.to_string();
+            // Clean up the temp dir so a retry starts fresh.
+            let _ = std::fs::remove_dir_all(&tmp);
+            if detail.contains("cannot find") || detail.contains("No such file") {
+                return Err(Error::Command(
+                    "Couldn't read the zip file. It may have been moved or deleted.".into(),
+                ));
+            }
+            if detail.contains("disk") || detail.contains("space") || detail.contains("No space") {
+                return Err(Error::Command(
+                    "Not enough disk space to extract the zip file.".into(),
+                ));
+            }
+            // Generic: likely a corrupted or unsupported archive.
+            return Err(Error::Command(format!(
+                "Couldn't extract the zip file. It may be corrupted or incomplete — try downloading it again.\n\nDetails: {detail}"
+            )));
+        }
         move_stripped(&tmp, dest, strip)?;
         std::fs::remove_dir_all(&tmp)?;
     } else {

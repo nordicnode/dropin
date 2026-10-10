@@ -5,36 +5,50 @@
 
 use eframe::egui;
 
-/// The dropin palette.
+/// The dropin palette: a sophisticated dark theme with depth.
+///
+/// Layers go BG < SURFACE < CARD < OVERLAY, each a step lighter.
+/// Borders are subtle; accent is used sparingly for primary actions.
 pub mod color {
     use eframe::egui::Color32;
 
-    /// Window background.
-    pub const BG: Color32 = Color32::from_rgb(17, 19, 24);
-    /// Panel / toolbar background.
-    pub const SURFACE: Color32 = Color32::from_rgb(24, 27, 34);
-    /// Card background.
-    pub const CARD: Color32 = Color32::from_rgb(30, 34, 43);
-    /// Borders and dividers.
-    pub const BORDER: Color32 = Color32::from_rgb(46, 51, 61);
-    /// Primary accent: buttons, links, active states.
-    pub const ACCENT: Color32 = Color32::from_rgb(91, 157, 255);
-    /// Primary text.
-    pub const TEXT: Color32 = Color32::from_rgb(235, 238, 244);
-    /// Secondary / muted text.
-    pub const TEXT_DIM: Color32 = Color32::from_rgb(148, 158, 175);
-    /// Faint text (captions, hashes).
-    pub const TEXT_FAINT: Color32 = Color32::from_rgb(105, 113, 130);
+    /// Window background: deep, not pure black.
+    pub const BG: Color32 = Color32::from_rgb(10, 12, 16);
+    /// Panels, toolbar, header: subtle lift from background.
+    pub const SURFACE: Color32 = Color32::from_rgb(17, 19, 25);
+    /// Cards: clear elevation above the surface.
+    pub const CARD: Color32 = Color32::from_rgb(24, 27, 34);
+    /// Popups, menus, dialogs: highest elevation.
+    pub const OVERLAY: Color32 = Color32::from_rgb(32, 36, 45);
+    /// Borders and dividers: low contrast.
+    pub const BORDER: Color32 = Color32::from_rgb(38, 42, 52);
+    /// Stronger border for interactive elements.
+    pub const BORDER_STRONG: Color32 = Color32::from_rgb(52, 57, 70);
+    /// Primary accent: emerald, matches the dropin brand.
+    /// Used sparingly: primary buttons, active states, links.
+    pub const ACCENT: Color32 = Color32::from_rgb(16, 185, 129);
+    /// Accent hover: slightly brighter.
+    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(52, 211, 153);
+    /// Accent text on dark: for links and highlights.
+    pub const ACCENT_TEXT: Color32 = Color32::from_rgb(110, 231, 183);
+    /// Primary text: near-white, not harsh.
+    pub const TEXT: Color32 = Color32::from_rgb(242, 244, 248);
+    /// Secondary text: muted.
+    pub const TEXT_DIM: Color32 = Color32::from_rgb(156, 163, 175);
+    /// Tertiary text: captions, metadata.
+    pub const TEXT_FAINT: Color32 = Color32::from_rgb(107, 114, 128);
     /// Success.
     pub const GOOD: Color32 = Color32::from_rgb(52, 211, 153);
     /// Warning.
     pub const WARN: Color32 = Color32::from_rgb(251, 191, 36);
     /// Danger / error.
     pub const BAD: Color32 = Color32::from_rgb(248, 113, 113);
-    /// Info badge.
+    /// Info.
     pub const INFO: Color32 = Color32::from_rgb(96, 165, 250);
-    /// App badge fill.
-    pub const BADGE_A: Color32 = Color32::from_rgb(91, 157, 255);
+    /// App badge fill: subtle, not neon.
+    pub const BADGE_A: Color32 = Color32::from_rgb(55, 65, 81);
+    /// App badge fill accent: for the gradient.
+    pub const BADGE_B: Color32 = Color32::from_rgb(75, 85, 105);
 }
 
 /// Apply the dropin theme to the egui context. Call once at startup.
