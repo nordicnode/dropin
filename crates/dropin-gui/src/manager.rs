@@ -579,6 +579,7 @@ impl ManagerApp {
                                     health::HealthKind::Shadowed => "shadowed",
                                     health::HealthKind::CrossSource => "also-installed",
                                     health::HealthKind::BrokenExec => "broken-menu",
+                                    health::HealthKind::NoFuse => "no-fuse",
                                 };
                                 ui.label(egui::RichText::new(format!("[{tag}] {}", issue.message)).strong());
                                 ui.label(egui::RichText::new(format!("hint: {}", issue.hint)).weak());

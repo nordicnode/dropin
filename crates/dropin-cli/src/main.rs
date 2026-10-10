@@ -218,6 +218,7 @@ fn run() -> dropin_core::Result<()> {
                         dropin_core::health::HealthKind::Shadowed => "shadowed",
                         dropin_core::health::HealthKind::CrossSource => "also-installed",
                         dropin_core::health::HealthKind::BrokenExec => "broken-menu",
+                        dropin_core::health::HealthKind::NoFuse => "no-fuse",
                     };
                     println!("\n[{tag}] {}", i.message);
                     println!("        hint: {}", i.hint);

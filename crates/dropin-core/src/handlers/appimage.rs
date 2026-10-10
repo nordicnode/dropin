@@ -37,11 +37,21 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         .file_name()
         .ok_or_else(|| Error::Unsupported("bad file name".into()))?;
     let dest: PathBuf = dirs.applications.join(file_name);
+    let slug = slugify(&d.name_hint);
     if dest.exists() {
-        return Err(Error::Refused(format!(
-            "{} already exists in ~/Applications",
-            file_name.to_string_lossy()
-        )));
+        // Is this the same app already installed? Point at update/remove
+        // instead of a bare "already exists".
+        let hint = match crate::ledger::Ledger::open().and_then(|l| l.get(&slug)) {
+            Ok(inst) => format!(
+                "'{}' is already installed ({}). To replace it, remove it first or check for updates.",
+                inst.name, file_name.to_string_lossy()
+            ),
+            Err(_) => format!(
+                "{} already exists in ~/Applications but isn't tracked by dropin. Rename the file or remove the existing one first.",
+                file_name.to_string_lossy()
+            ),
+        };
+        return Err(Error::Refused(hint));
     }
 
     if opts.keep_source {
@@ -53,19 +63,30 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     perms.set_mode(0o755);
     std::fs::set_permissions(&dest, perms)?;
 
+    // AppImages need FUSE to run. Warn now rather than leaving the user
+    // with a menu entry that silently fails to launch.
+    if !crate::health::have_fuse() {
+        eprintln!(
+            "warning: FUSE doesn't appear to be available — this AppImage may not launch.\n\
+             Install FUSE for your distro (e.g. `apt install fuse libfuse2`) or run with --appimage-extract."
+        );
+    }
+
     let mut paths = vec![dest.clone()];
-    let slug = slugify(&d.name_hint);
     let mut update_info: Option<String> = None;
 
     // Extract the embedded .desktop file + icon for menu integration.
     // `--appimage-extract` works without FUSE (type 2 images).
+    let mut version: Option<String> = None;
     match extract_metadata(&dest) {
         Ok(meta) => {
-            // Capture the embedded update channel for `dropin update`.
+            // Capture the embedded update channel for `dropin update`,
+            // and the version if the AppImage declares one.
             if let Some(df) = &meta.desktop_file {
-                update_info = parse_desktop_file(df)
-                    .ok()
-                    .and_then(|m| m.get("X-AppImage-UpdateInformation").cloned());
+                if let Ok(map) = parse_desktop_file(df) {
+                    update_info = map.get("X-AppImage-UpdateInformation").cloned();
+                    version = map.get("X-AppImage-Version").cloned();
+                }
             }
             let (entry_path, mut extra) = match meta.desktop_file {
                 Some(df) => adopt_desktop_file_appimage(&df, &slug, &d.name_hint, &dest)?,
@@ -83,14 +104,52 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         }
     }
 
+    // Fall back to the filename: OpenChamber-2.2.0-linux-x86_64.AppImage.
+    if version.is_none() {
+        version = version_from_filename(&file_name.to_string_lossy());
+    }
+
     Ok(InstallOutcome {
         name: slug,
-        version: None,
+        version,
         install_root: None,
         paths,
         external: false,
         update_info,
     })
+}
+
+/// Guess a version from an AppImage filename.
+/// `OpenChamber-2.2.0-linux-x86_64.AppImage` -> `Some("2.2.0")`.
+/// Returns None when nothing version-like is found.
+fn version_from_filename(name: &str) -> Option<String> {
+    let stem = name
+        .strip_suffix(".AppImage")
+        .or_else(|| name.strip_suffix(".appimage"))
+        .unwrap_or(name);
+    // Find the first run of digits-and-dots that looks like a version.
+    let mut best: Option<String> = None;
+    let mut cur = String::new();
+    let flush = |cur: &mut String, best: &mut Option<String>| {
+        if cur.chars().filter(|&c| c == '.').count() >= 1
+            && cur.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+            && cur.len() > best.as_ref().map(|b| b.len()).unwrap_or(0)
+        {
+            *best = Some(cur.clone());
+        }
+        cur.clear();
+    };
+    for c in stem.chars() {
+        if c.is_ascii_digit() || c == '.' {
+            cur.push(c);
+        } else {
+            flush(&mut cur, &mut best);
+        }
+    }
+    flush(&mut cur, &mut best);
+    // Trim trailing dots ("2.0." -> "2.0").
+    best.map(|b| b.trim_end_matches('.').to_string())
+        .filter(|b| !b.is_empty())
 }
 
 struct ExtractedMeta {
@@ -307,6 +366,24 @@ mod safe_extract_tests {
         f.write_all(&vec![0u8; 5000]).unwrap();
         f.write_all(&sq_bytes).unwrap();
         appimage
+    }
+
+    #[test]
+    fn version_from_filename_guesses() {
+        assert_eq!(
+            version_from_filename("OpenChamber-2.2.0-linux-x86_64.AppImage"),
+            Some("2.2.0".to_string())
+        );
+        assert_eq!(
+            version_from_filename("Krita-5.2.1-x86_64.AppImage"),
+            Some("5.2.1".to_string())
+        );
+        assert_eq!(
+            version_from_filename("myapp-1.0.AppImage"),
+            Some("1.0".to_string())
+        );
+        assert_eq!(version_from_filename("myapp.AppImage"), None);
+        assert_eq!(version_from_filename("myapp-latest.AppImage"), None);
     }
 
     #[test]

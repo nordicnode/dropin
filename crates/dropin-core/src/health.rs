@@ -20,6 +20,15 @@ pub enum HealthKind {
     CrossSource,
     /// A menu entry's Exec points at something that doesn't exist.
     BrokenExec,
+    /// FUSE isn't available, so AppImages can't run.
+    NoFuse,
+}
+
+/// True when the system can run AppImages (FUSE device or fusermount present).
+pub fn have_fuse() -> bool {
+    std::path::Path::new("/dev/fuse").exists()
+        || crate::have("fusermount")
+        || crate::have("fusermount3")
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +60,22 @@ fn check_with(dirs: &UserDirs, sys_desktop_dirs: &[PathBuf], installs: &[Install
     issues.extend(check_shadowed(dirs, sys_desktop_dirs, installs));
     issues.extend(check_cross_source(dirs, installs));
     issues.extend(check_broken_exec(dirs, installs));
+    issues.extend(check_fuse(installs));
     issues
+}
+
+/// AppImages need FUSE to run. If the user has AppImages installed but no
+/// FUSE, they won't launch — flag it with a distro-agnostic hint.
+fn check_fuse(installs: &[Install]) -> Vec<HealthIssue> {
+    let has_appimage = installs.iter().any(|i| i.format == "AppImage");
+    if !has_appimage || have_fuse() {
+        return Vec::new();
+    }
+    vec![HealthIssue {
+        kind: HealthKind::NoFuse,
+        message: "FUSE isn't available, so installed AppImages can't run".into(),
+        hint: "install FUSE for your distro (e.g. `apt install fuse libfuse2`, `dnf install fuse`, `pacman -S fuse2`) or use --appimage-extract".into(),
+    }]
 }
 
 /// Menu entries whose Exec binary doesn't exist. Catches the old dropin bug
