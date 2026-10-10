@@ -5,6 +5,7 @@
 //! Long operations run on background threads; the UI polls them and
 //! refreshes the app list when they finish.
 
+use crate::style;
 use dropin_core::{health, install, integrate, settings};
 use eframe::egui;
 use std::path::PathBuf;
@@ -212,10 +213,11 @@ impl eframe::App for ManagerApp {
 
         // ---- toolbar ----
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.heading("dropin");
-                ui.add_space(12.0);
-                if ui.button("Install app…").clicked() && !busy {
+                ui.label(egui::RichText::new("dropin").size(20.0).strong());
+                ui.add_space(16.0);
+                if style::primary_button_enabled(ui, !busy, "Install app…").clicked() && !busy {
                     if let Some(path) = rfd::FileDialog::new()
                         .set_title("Choose a file to install")
                         .pick_file()
@@ -232,43 +234,64 @@ impl eframe::App for ManagerApp {
                         OpDone { message: msg, refresh_apps: true }
                     });
                 }
-                if ui.button("Doctor").clicked() && !busy {
+                if style::ghost_button(ui, "Doctor").clicked() && !busy {
                     self.doctor_issues = health::check();
                     self.doctor_open = true;
                 }
-                if ui.button("Settings").clicked() {
+                if style::ghost_button(ui, "Settings").clicked() {
                     self.settings_open = true;
                 }
             });
+            ui.add_space(4.0);
         });
 
         // ---- status bar ----
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 if let Some(op) = &self.busy {
                     ui.spinner();
-                    ui.label(format!("{}…", op.label));
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(format!("{}…", op.label)).color(style::color::TEXT_DIM));
                 } else if self.status.is_empty() {
-                    ui.label(egui::RichText::new("Ready.").weak());
+                    style::faint_label(ui, "Ready");
                 } else {
-                    ui.label(&self.status);
+                    style::dim_label(ui, &self.status);
                 }
             });
+            ui.add_space(2.0);
         });
 
         // ---- app list ----
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(8.0);
             if self.apps.is_empty() {
-                ui.add_space(20.0);
-                ui.label("Nothing installed yet.");
-                ui.label("Click “Install app…” above, or double-click any installer file.");
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.label(egui::RichText::new("No apps installed yet").size(18.0).strong());
+                    ui.add_space(8.0);
+                    style::dim_label(ui, "Click “Install app…” above, or double-click any installer file.");
+                    ui.add_space(8.0);
+                    style::faint_label(ui, "You can also drag and drop files onto this window.");
+                });
                 return;
             }
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} app{} installed",
+                    self.apps.len(),
+                    if self.apps.len() == 1 { "" } else { "s" }
+                ))
+                .small()
+                .color(style::color::TEXT_FAINT),
+            );
+            ui.add_space(8.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for i in 0..self.apps.len() {
                     // Clone the row: app_card may mutate self (dialogs, ops).
                     let app = self.apps[i].clone();
                     self.app_card(ui, &app, busy);
+                    ui.add_space(8.0);
                 }
             });
         });
@@ -303,29 +326,42 @@ impl ManagerApp {
         }
         let mut act = Act::None;
 
-        ui.group(|ui| {
+        style::card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
+                style::app_badge(ui, &app.name, 48.0);
+                ui.add_space(8.0);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.heading(&app.name);
+                        ui.label(egui::RichText::new(&app.name).size(17.0).strong());
                         if app.verified {
-                            ui.label(egui::RichText::new("✓").color(egui::Color32::GREEN));
+                            ui.label(
+                                egui::RichText::new("✓")
+                                    .color(style::color::GOOD)
+                                    .strong(),
+                            );
                         }
                     });
-                    let mut sub = app.format.clone();
-                    if let Some(v) = &app.version {
-                        sub.push_str(&format!(" · {v}"));
-                    }
-                    ui.label(egui::RichText::new(sub).weak());
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        style::badge(
+                            ui,
+                            &app.format,
+                            style::format_color(&app.format),
+                        );
+                        if let Some(v) = &app.version {
+                            style::badge(ui, &format!("v{v}"), style::color::BORDER);
+                        }
+                    });
                     if let Some(repo) = &app.github_repo {
-                        ui.label(egui::RichText::new(format!("tracking {repo}")).weak());
+                        ui.add_space(2.0);
+                        style::faint_label(ui, &format!("tracking {repo}"));
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Remove").clicked() && !busy {
+                    if style::ghost_button(ui, "Remove").clicked() && !busy {
                         act = Act::Remove;
                     }
-                    if app.has_snapshots && ui.button("Rollback").clicked() && !busy {
+                    if app.has_snapshots && style::ghost_button(ui, "Rollback").clicked() && !busy {
                         act = Act::Rollback;
                     }
                     // Script installs have no update channel or GitHub tracking;
@@ -336,17 +372,16 @@ impl ManagerApp {
                     }
                     if !is_script {
                         if app.github_repo.is_some() {
-                            if ui.button("Untrack").clicked() && !busy {
+                            if style::ghost_button(ui, "Untrack").clicked() && !busy {
                                 act = Act::Untrack;
                             }
-                        } else if ui.button("Track…").clicked() && !busy {
+                        } else if style::ghost_button(ui, "Track…").clicked() && !busy {
                             act = Act::Track;
                         }
                     }
                 });
             });
         });
-        ui.add_space(4.0);
 
         let name = app.name.clone();
         match act {
@@ -429,18 +464,21 @@ impl ManagerApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label("GitHub repo (owner/repo):");
+                    style::dim_label(ui, "GitHub repo (owner/repo):");
+                    ui.add_space(4.0);
                     ui.text_edit_singleline(&mut self.track_input);
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui.button("Track").clicked() {
-                                submit = true;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::ghost_button(ui, "Cancel").clicked() {
+                                close = true;
                             }
+                            ui.add_enabled_ui(!busy, |ui| {
+                                if style::primary_button(ui, "Track").clicked() {
+                                    submit = true;
+                                }
+                            });
                         });
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
                     });
                 });
             if close {
@@ -471,18 +509,30 @@ impl ManagerApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(format!("Remove {name} and undo its installation?"));
+                    ui.label(
+                        egui::RichText::new(format!("Remove {name} and undo its installation?"))
+                            .size(15.0),
+                    );
+                    ui.add_space(6.0);
                     ui.checkbox(&mut self.remove_purge, "Also move leftover config/cache/data to the trash");
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui.button("Remove").clicked() {
-                                confirm = true;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::ghost_button(ui, "Cancel").clicked() {
+                                close = true;
                             }
+                            ui.add_enabled_ui(!busy, |ui| {
+                                let btn = egui::Button::new(
+                                    egui::RichText::new("Remove").strong().color(style::color::TEXT),
+                                )
+                                .fill(style::color::BAD)
+                                .corner_radius(8.0)
+                                .min_size(egui::vec2(100.0, 34.0));
+                                if ui.add(btn).clicked() {
+                                    confirm = true;
+                                }
+                            });
                         });
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
                     });
                 });
             if close {
@@ -512,18 +562,27 @@ impl ManagerApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label("Restore the version from before the last update?");
-                    ui.label(egui::RichText::new("The current version is kept as a snapshot, so this is reversible.").weak());
-                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("Restore the version from before the last update?")
+                            .size(15.0),
+                    );
+                    ui.add_space(4.0);
+                    style::dim_label(
+                        ui,
+                        "The current version is kept, so you can switch back again.",
+                    );
+                    ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui.button("Roll back").clicked() {
-                                confirm = true;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if style::ghost_button(ui, "Cancel").clicked() {
+                                close = true;
                             }
+                            ui.add_enabled_ui(!busy, |ui| {
+                                if style::primary_button(ui, "Roll back").clicked() {
+                                    confirm = true;
+                                }
+                            });
                         });
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
                     });
                 });
             if close {
