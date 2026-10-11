@@ -1,26 +1,32 @@
-# dropin v0.2.0 — launch kit (DRAFT)
+# dropin v0.2.1 — launch kit
 
-Release is live: https://github.com/nordicnode/dropin (tag v0.2.0, 15MB tarball: dropin 11MB + dropin-gui 28MB, install.sh, README).
+Status: v0.2.1 needs to be rolled from main before Monday. The v0.2.0 tag and
+tarball predate the GUI removal and the adopt + E2E fixes (and the v0.2.0
+tarball still ships dropin-gui), so the announced version should be v0.2.1,
+built from current main.
 
 ## Timing
 
-**Don't post Friday night.** Launch posts sink on weekends. Aim **Monday Oct 12, ~8–9 AM PT** for both. "New release" news value holds for about a week — after that, skip it.
+**Don't post Friday night.** Launch posts sink on weekends. Aim **Monday Oct 12,
+~8–9 AM PT** for both. "New release" news value holds for about a week — after
+that, skip it.
 
-## Decide before Monday
+## Before Monday (needs your go-ahead)
 
-Two features landed on main AFTER the v0.2.0 tag (commits a5f3c9c and 832c78f):
-
-- **"Add existing game…"** — adopt pre-installed games Lutris-style: pick a folder, dropin scans for executables, registers it in the library with a .desktop entry and uninstall tracking, without moving anything.
-- **Proton launch diagnostics** — failed game launches capture output to proton-last-run.log and the error dialog gives actionable advice (driver issues, Vulkan failures) instead of a bare exit code.
-
-Options: (a) roll **v0.2.1** before Monday and announce that instead — the "add existing game" story is the strongest hook; or (b) announce v0.2.0 as-is and hold the rest. Your call.
+- [ ] Tag **v0.2.1** from main and rebuild the release tarball (dropin binary
+      only; dropin-gui is gone). The v0.2.0 tarball still ships the GUI.
+- [ ] Write the GitHub release notes from the CLI-only draft in
+      `release/v0.2.1-notes.md`.
+- [ ] Move the stale GUI screenshots out of `assets/` (screenshot-manager.png,
+      screenshot-install-dialog.png, screenshot-done.png). The README only
+      uses screenshot-terminal-install.png now.
 
 ## Post 1 — Hacker News (Show HN)
 
 Title:
 
 ```
-Show HN: Dropin – double-click installer for every Linux package format
+Show HN: Dropin – point it at a Linux installer file and it's installed
 ```
 
 Body:
@@ -28,22 +34,26 @@ Body:
 ```
 I got tired of the ritual: download some tarball, guess what's inside it,
 hand-write a .desktop file, and then never be able to uninstall it cleanly.
-So I built dropin.
+So I built dropin. Point it at a file and it's installed.
 
 It detects the format by magic bytes — AppImage, .deb, .rpm, tarballs, zips,
-flatpakrefs, installer scripts — installs rootless into ~/Applications +
-~/.local/opt, and records every path in a SQLite ledger so `dropin remove`
-reverses the install exactly. Fully offline, no root, no telemetry.
+flatpakrefs, installer scripts, even Windows .exe/.msi. Installs rootless
+into ~/Applications + ~/.local/opt, and records every path in a SQLite ledger
+so `dropin remove` reverses the install exactly. Fully offline, no root,
+no telemetry.
 
-v0.2.0 is GUI-first: a manager window (per-app update / rollback / remove /
-track, check-for-updates, doctor), pure-Rust archive extraction so installs
-never shell out to unzip/tar/ar, an extraction cache so big archives aren't
-unpacked three times, a dark-theme redesign, and plain-language error dialogs
-with a copy button. Proton/GE-Proton support with zero-friction Wine setup
-means Windows games install and run from the same flow. 89 tests passing.
+v0.2.1 is CLI-only (I ripped the GUI out): `dropin info <file>` dry-runs any
+file before it touches anything, installer scripts stay sandboxed and need
+your explicit confirmation, and `dropin remove` is the whole undo story.
+New: `dropin adopt <dir>` registers an already-installed game folder
+Lutris-style — scans for executables, writes the .desktop entry, tracks it for
+clean removal, moves nothing. Proton/GE-Proton support with automatic setup
+(`dropin setup-wine` / `dropin setup-proton`) and launch diagnostics that tell
+you what's actually wrong (driver issues, Vulkan failures) instead of a bare
+exit code.
 
-https://github.com/nordicnode/dropin — MIT. Happy to answer questions about
-the pure-Rust .rpm reader or the ledger design.
+95 tests passing. https://github.com/nordicnode/dropin — MIT. Happy to answer
+questions about the pure-Rust .rpm reader or the ledger design.
 ```
 
 URL: https://github.com/nordicnode/dropin
@@ -53,33 +63,34 @@ URL: https://github.com/nordicnode/dropin
 Title:
 
 ```
-dropin v0.2.0 – universal Linux installer: double-click any AppImage/.deb/.rpm/tarball, rootless, with a real uninstall ledger
+dropin v0.2.1 – universal Linux installer, now CLI-only: one command for AppImage/.deb/.rpm/tarballs, with a real uninstall ledger
 ```
 
 Body:
 
 ```
-I'm the author — dropin v0.2.0 is out.
+I'm the author — dropin v0.2.1 is out.
 
-It's the "double-click anything" installer for Linux: magic-byte detection
-across .AppImage/.deb/.rpm/.tar.gz/.zip/.flatpakref/.sh, installs rootless
-into ~/Applications + ~/.local/opt, and tracks every path in a SQLite ledger
-so uninstalls are actually clean (`dropin remove`, or `--purge` for leftovers).
+It's a universal installer for Linux, CLI-only: point it at a file and it's
+installed. Magic-byte detection across .AppImage/.deb/.rpm/.tar.gz/.zip/
+.flatpakref/.sh (plus Windows .exe/.msi via Wine/Proton). Installs rootless
+into ~/Applications + ~/.local/opt, and a SQLite ledger tracks every path so
+`dropin remove` is actually clean (`--purge` moves leftovers to the trash).
 
-v0.2.0 brings pure-Rust archive handling (no external tools), an extraction
-cache, a dark theme redesign, better error messages with a copy button,
-Proton/GE-Proton game support, and drag-and-drop install.
+New since v0.2.0: the GUI is gone (CLI-only going forward), `dropin adopt`
+adds an already-installed game folder Lutris-style without moving anything,
+and Proton launch failures now produce actionable diagnostics instead of a
+bare exit code. Plus a full E2E pass against real games: Windows zip fixes,
+adopt cleanup, and 7 UX fixes.
 
 Install:
-  tar -xzf dropin-v0.2.0-x86_64-linux.tar.gz && cd dropin-v0.2.0 && ./install.sh
+  tar -xzf dropin-v0.2.1-x86_64-linux.tar.gz && cd dropin-v0.2.1 && ./install.sh
 
 Repo + release: https://github.com/nordicnode/dropin (MIT, Linux x86_64)
 ```
 
-## Checklist
+## Checklist Monday
 
-- [ ] Decide: announce v0.2.0, or roll v0.2.1 first (adds "Add existing game")
-- [ ] Eyeball assets/screenshot-*.png — the v0.2.0 dark theme changed the UI, regenerate any that show the old look
 - [ ] Monday ~8–9 AM PT: submit Show HN (link post)
 - [ ] Same window: post to r/linux (follow subreddit self-promo norms — engage in comments)
 - [ ] First hour: reply to every comment/question; that's what drives ranking
