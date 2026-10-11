@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "dropin-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "dropin-core",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "dropin-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "backhand",
  "bzip2 0.4.4",
