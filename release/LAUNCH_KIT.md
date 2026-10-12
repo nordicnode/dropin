@@ -1,9 +1,12 @@
 # dropin v0.2.1 — launch kit
 
-Status: v0.2.1 needs to be rolled from main before Monday. The v0.2.0 tag and
-tarball predate the GUI removal and the adopt + E2E fixes (and the v0.2.0
-tarball still ships dropin-gui), so the announced version should be v0.2.1,
-built from current main.
+Status (verified 2026-10-11): **v0.2.1 is rolled and live.** Tag v0.2.1 pushed,
+CLI-only tarball published at
+https://github.com/nordicnode/dropin/releases/tag/v0.2.1 (contains only
+README.md, the dropin binary, and the CLI-only rootless install.sh — no GUI
+binary), release notes written from the CLI-only draft, and the three stale
+GUI screenshots moved to `archive/`. The v0.2.0 tarball still ships
+dropin-gui; announce v0.2.1 only.
 
 ## Timing
 
@@ -11,15 +14,18 @@ built from current main.
 ~8–9 AM PT** for both. "New release" news value holds for about a week — after
 that, skip it.
 
-## Before Monday (needs your go-ahead)
+## Before Monday — all done 2026-10-11 (verified)
 
-- [ ] Tag **v0.2.1** from main and rebuild the release tarball (dropin binary
+- [x] Tag **v0.2.1** from main and rebuild the release tarball (dropin binary
       only; dropin-gui is gone). The v0.2.0 tarball still ships the GUI.
-- [ ] Write the GitHub release notes from the CLI-only draft in
+- [x] Write the GitHub release notes from the CLI-only draft in
       `release/v0.2.1-notes.md`.
-- [ ] Move the stale GUI screenshots out of `assets/` (screenshot-manager.png,
+- [x] Move the stale GUI screenshots out of `assets/` (screenshot-manager.png,
       screenshot-install-dialog.png, screenshot-done.png). The README only
       uses screenshot-terminal-install.png now.
+
+Remaining for Monday: only Mikey's own-hardware `dropin adopt` test (his
+call whether to hold `adopt` out of the announcement if untested).
 
 ## Post 1 — Hacker News (Show HN)
 
