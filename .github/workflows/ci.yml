@@ -58,3 +58,22 @@ jobs:
             -e DROPIN_ESCALATE="" -e DROPIN_HOME=/tmp/dropin-home \
             fedora:latest \
             sh -c './target/debug/dropin install --yes --system /tmp/hello.rpm && ./target/debug/dropin list && ./target/debug/dropin remove hello'
+
+  wine-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64
+      - name: Build
+        run: cargo build --workspace
+      - name: Real Wine install test
+        env:
+          WINEDEBUG: "-all"
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: cargo test -p dropin-core --lib handlers::wine::tests::installs_a_real_pe_with_real_wine -- --nocapture

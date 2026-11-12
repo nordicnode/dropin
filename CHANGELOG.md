@@ -80,7 +80,8 @@ All notable changes to dropin are documented here. The format follows
 - `bzip2` is now statically linked, so the release binary only depends on
   glibc/libm/libgcc and runs across distros.
 - CI now exercises real `--system` install/remove on Debian (apt) and
-  Fedora (dnf in a container).
+  Fedora (dnf in a container), and a real Wine runtime install of the PE
+  fixture (wineboot + wine + prefix cleanup).
 
 ### Changed
 
