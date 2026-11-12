@@ -676,10 +676,6 @@ mod tests {
 
     #[test]
     fn installs_a_real_pe_with_real_wine() {
-        // Slow and environment-dependent: only runs where Wine is installed.
-        if !have_wine() {
-            return;
-        }
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello.exe");
         if !fixture.exists() {
@@ -691,6 +687,11 @@ mod tests {
         std::env::set_var("WINEDEBUG", "-all");
         std::env::set_var("WINEDLLOVERRIDES", "mscoree,mshtml=");
         crate::test_env::with_home(&home, || {
+            // Check inside the same HOME the install will use: a Wine found
+            // only in the real HOME isn't usable in the isolated test home.
+            if !have_wine() {
+                return;
+            }
             let opts = InstallOptions {
                 yes: true,
                 runner: Some(super::super::proton::Runner::Wine),
