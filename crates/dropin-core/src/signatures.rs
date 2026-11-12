@@ -1,10 +1,16 @@
-//! Signature verification with key pinning (TOFU + continuity).
+//! Signature continuity with key pinning (TOFU + continuity).
 //!
 //! When a `.asc`/`.sig` detached signature accompanies a download, dropin
 //! parses it to extract the issuer key fingerprint. On first install the
 //! fingerprint is pinned (trust on first use, over HTTPS). On updates, a
-//! changed fingerprint is refused — mirroring Android's signature-continuity
-//! rule. This catches supply-chain key swaps even without a PKI.
+//! changed, missing, or unreadable signature is refused — mirroring Android's
+//! signature-continuity rule. This catches supply-chain key swaps even
+//! without a PKI.
+//!
+//! Scope: this is continuity checking, not cryptographic verification. We do
+//! not have the publisher's public key, so we cannot prove the signature is
+//! valid; we can only prove the signer identity did not change between
+//! releases. The README describes it the same way.
 
 use crate::{Error, Result};
 use std::path::Path;
@@ -15,6 +21,9 @@ pub enum SigCheck {
     None,
     /// Signature found; issuer key ID (hex).
     Found { fingerprint: String },
+    /// A signature file exists but could not be parsed. Treat this as
+    /// suspicious rather than as "no signature".
+    Invalid(String),
 }
 
 /// Look for `<file>.asc` or `<file>.sig` next to `file`.
@@ -82,8 +91,34 @@ pub fn check(file: &Path) -> SigCheck {
     match find_signature(file) {
         Some(sig) => match issuer_fingerprint(&sig) {
             Ok(fingerprint) => SigCheck::Found { fingerprint },
-            Err(_) => SigCheck::None,
+            Err(e) => SigCheck::Invalid(format!("{}: {e}", sig.display())),
         },
         None => SigCheck::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_signature_is_none() {
+        let dir = crate::unique_temp_dir("dropin-sig-none");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("app.AppImage");
+        std::fs::write(&file, b"data").unwrap();
+        assert!(matches!(check(&file), SigCheck::None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_signature_is_invalid_not_none() {
+        let dir = crate::unique_temp_dir("dropin-sig-bad");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("app.AppImage");
+        std::fs::write(&file, b"data").unwrap();
+        std::fs::write(dir.join("app.AppImage.asc"), b"not a signature").unwrap();
+        assert!(matches!(check(&file), SigCheck::Invalid(_)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

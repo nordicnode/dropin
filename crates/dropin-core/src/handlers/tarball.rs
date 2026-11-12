@@ -532,20 +532,34 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
         )));
     }
     // Cache the extraction for install() to reuse (avoids extracting twice).
+    let slug = slugify(&d.name_hint);
+    let main_bin = choose_binary(&sniff, &slug, &d.name_hint);
+    let is_windows = main_bin
+        .as_ref()
+        .map(|rel| is_windows_exe(&tmp.join(rel)))
+        .unwrap_or(false);
     if let Ok(id) = source_id(src) {
         cache_insert(id, tmp);
     } else {
         let _ = std::fs::remove_dir_all(&tmp);
     }
-    let slug = slugify(&d.name_hint);
-    Ok(InstallPlan {
-        app_name: d.name_hint.clone(),
-        version: None,
-        steps: vec![
+    let steps = if is_windows {
+        vec![
+            format!("Extract to ~/.local/opt/{slug}"),
+            "Create an isolated Wine/Proton prefix for this game".into(),
+            "Add a menu entry that launches it with Wine/Proton".into(),
+        ]
+    } else {
+        vec![
             format!("Extract to ~/.local/opt/{slug}"),
             "Link the main executable into ~/.local/bin".into(),
             "Adopt or generate an application menu entry".into(),
-        ],
+        ]
+    };
+    Ok(InstallPlan {
+        app_name: d.name_hint.clone(),
+        version: None,
+        steps,
         needs_root: false,
         needs_confirmation: false,
     })
@@ -569,6 +583,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // If we extracted fresh here (not from plan's cache), clean up on error.
     // The success path moves the temp dir to the final location.
     let tmp_dir = tmp.unwrap(); // sniff always returns a temp dir
+                                // Set once the extracted tree has been moved into ~/.local/opt, so a
+                                // later failure (e.g. Wine missing) can remove the half-installed root.
+    let mut created_root: Option<PathBuf> = None;
     let result = (|| -> Result<InstallOutcome> {
         if !looks_like_app(&sniff) {
             return Err(Error::Refused(format!(
@@ -591,6 +608,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         // Move the extracted temp dir to the final location (fast rename,
         // no re-extraction).
         std::fs::rename(&tmp_dir, &root)?;
+        created_root = Some(root.clone());
 
         // Check if this is a Windows game (main executable is a .exe).
         // If so, set up Wine/Proton instead of treating it as a Linux app.
@@ -658,6 +676,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // Clean up temp dir if we failed (success moved it via rename).
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
+        if let Some(root) = created_root {
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
     result
 }
@@ -752,6 +773,7 @@ fn install_windows_game(
 ) -> Result<InstallOutcome> {
     use crate::handlers::proton::Runner;
 
+    super::ensure_not_installed(slug)?;
     let main_exe = root.join(main_exe_rel);
     // Pick Wine vs Proton (same logic as the Wine handler).
     let runner = crate::handlers::wine::pick_runner(&main_exe, name_hint, opts);
@@ -762,7 +784,7 @@ fn install_windows_game(
             if !crate::handlers::wine::have_wine() {
                 return Err(Error::Refused(
                     "Wine isn't installed, so Windows games can't run yet.\n\
-                     Run `dropin setup-wine` or use the GUI to set it up automatically."
+                     Run `dropin setup-wine` to set it up automatically."
                         .into(),
                 ));
             }
@@ -771,7 +793,7 @@ fn install_windows_game(
             if !crate::handlers::proton::have_umu() {
                 return Err(Error::Refused(
                     "Proton support isn't set up yet.\n\
-                     Run `dropin setup-proton` or use the GUI to set it up automatically."
+                     Run `dropin setup-proton` to set it up automatically."
                         .into(),
                 ));
             }

@@ -67,10 +67,10 @@ Installed 'coolapp'.
 Remove anytime with: dropin remove coolapp
 
 $ dropin list
-coolapp — tarball
+coolapp — tar.gz archive
 
 $ dropin update --all
-[manual]     coolapp    tarballs have no update channel, re-download upstream
+[manual]     coolapp    tarballs have no update channel — re-download upstream
 [up-to-date] firefox    already current
 ```
 
@@ -80,7 +80,7 @@ AppImages live in `~/Applications/<app>/<version>/`, with an `active` symlink po
 
 Update channels get captured at install time (AppImage zsync info, Flatpak remotes). `dropin update` does what it can and tells you plainly about the rest. AppImages update over a native zsync delta, so only the changed blocks come down the wire. The result gets SHA-1 verified, and the new version lands in its own directory, which means `dropin rollback <name>` flips `active` back to the previous version instantly. Only the last two generations are kept; older ones are pruned automatically.
 
-For AppImages from GitHub releases with no zsync channel, `dropin track <name> --github owner/repo` follows the repo instead. If the release ships a detached signature (`.asc`/`.sig`), dropin pins the signing key on first install and refuses updates signed by a different key. Update checks use ETag caching so a quiet week costs you zero API quota.
+For AppImages from GitHub releases with no zsync channel, `dropin track <name> --github owner/repo` follows the repo instead. If the release ships a detached signature (`.asc`/`.sig`), dropin pins the signing key on first install and refuses updates whose signature is missing, unreadable, or from a different key (signature continuity, not full cryptographic verification). Update checks use ETag caching so a quiet week costs you zero API quota.
 
 ## Installer scripts: audited, sandboxed, reversible
 
@@ -139,13 +139,13 @@ The closest thing out there is [exeify](https://github.com/scdouglas1999/exeify)
 
 - **Your home directory is yours.** Dropin installs to user scope and never asks for root unless you explicitly choose a system install.
 - **Show before doing.** `dropin info` always lays out the plan first. Installer scripts need your explicit okay.
-- **Fully offline core.** No AI, no accounts, no telemetry, no phoning home. The only network use is what you explicitly approve: GitHub release checks for apps you choose to track (ETag-cached, toggleable), and one-time internet access for a sandboxed installer when you allow it.
+- **Offline by default.** No AI, no accounts, no telemetry, no background phoning home. Network access only happens for actions you start: GitHub release checks for apps you choose to track (ETag-cached), one-time internet access for a sandboxed installer when you allow it, `dropin setup-wine` / `setup-proton` downloads, and a one-time umu-database lookup when installing a Windows game (so Proton can apply per-game fixes; it falls back to a generic profile if offline).
 - **Rootless by default.** Scripts run sandboxed without admin rights; system installs are opt-in.
 - **Honest about limits.** If dropin can't update something automatically, it says so instead of pretending.
 
 ## Contributing
 
-Issues and PRs welcome. `cargo test` and `cargo clippy --all-targets` need to be clean, CI checks.
+Issues and PRs welcome. `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings` need to be clean; CI checks all three.
 
 ## License
 

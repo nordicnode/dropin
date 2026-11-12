@@ -278,14 +278,14 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         || os_release.contains("\nID=debian")
         || os_release.contains("\nID=ubuntu")
     {
-        ("pkexec", vec!["apt", "install", "-y", s])
+        (super::escalate(), vec!["apt", "install", "-y", s])
     } else if os_release.contains("fedora")
         || os_release.contains("rhel")
         || os_release.contains("ID_LIKE=\"rhel")
     {
-        ("pkexec", vec!["dnf", "install", "-y", s])
+        (super::escalate(), vec!["dnf", "install", "-y", s])
     } else if os_release.contains("arch") {
-        ("pkexec", vec!["pacman", "-U", "--noconfirm", s])
+        (super::escalate(), vec!["pacman", "-U", "--noconfirm", s])
     } else {
         return Err(Error::Refused(
             "no supported system package manager detected for --system install".into(),

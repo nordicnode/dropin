@@ -70,15 +70,20 @@ pub fn latest_release_from(api_base: &str, repo: &str, data_dir: &Path) -> Resul
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok());
 
-    let mut req = ureq::get(&url).header("User-Agent", USER_AGENT);
-    req = req.header("Accept", "application/vnd.github+json");
+    // Keep HTTP error statuses as responses so the 304/403/404 handling
+    // below can actually run (ureq otherwise turns 4xx/5xx into Err).
+    let mut req = ureq::get(&url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .header("User-Agent", USER_AGENT)
+        .header("Accept", "application/vnd.github+json");
     if let Some(c) = &cached {
         req = req.header("If-None-Match", &c.etag);
     }
-    let mut res = req.call().map_err(|e| {
-        // ureq surfaces HTTP errors as well; recover the status.
-        Error::Zsync(format!("GitHub API request failed: {e}"))
-    })?;
+    let mut res = req
+        .call()
+        .map_err(|e| Error::Zsync(format!("GitHub API request failed: {e}")))?;
 
     let status = res.status().as_u16();
     let body = match status {

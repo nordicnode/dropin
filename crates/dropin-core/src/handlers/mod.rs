@@ -73,3 +73,67 @@ pub fn assert_safe_member(name: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Reject a second install of the same slug before running anything that
+/// could leave files behind. Handlers that create a unique root already
+/// check that root; this covers prefix-based (Wine) and script installs.
+pub fn ensure_not_installed(slug: &str) -> Result<()> {
+    if crate::ledger::Ledger::open()
+        .and_then(|l| l.get(slug))
+        .is_ok()
+    {
+        return Err(Error::Refused(format!(
+            "'{slug}' is already installed — remove it first with `dropin remove {slug}`"
+        )));
+    }
+    Ok(())
+}
+
+/// The privilege-escalation command to use: pkexec when available (graphical
+/// prompt), otherwise sudo.
+pub fn escalate() -> &'static str {
+    if crate::have("pkexec") {
+        "pkexec"
+    } else {
+        "sudo"
+    }
+}
+
+/// Remove a package that was installed with `--system`, using the distro's
+/// package manager. This is the counterpart to `deb::install_system` and
+/// `rpm::install_system`; without it, `dropin remove` would only forget the
+/// ledger entry and leave the package installed.
+pub fn remove_system_package(name: &str) -> Result<String> {
+    let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let (pm, args): (&str, Vec<&str>) = if os_release.contains("ID_LIKE=debian")
+        || os_release.contains("\nID=debian")
+        || os_release.contains("\nID=ubuntu")
+    {
+        ("apt", vec!["remove", "-y", name])
+    } else if os_release.contains("fedora")
+        || os_release.contains("rhel")
+        || os_release.contains("ID_LIKE=\"rhel")
+    {
+        ("dnf", vec!["remove", "-y", name])
+    } else if os_release.contains("arch") {
+        ("pacman", vec!["-R", "--noconfirm", name])
+    } else if os_release.contains("suse") || os_release.contains("opensuse") {
+        ("zypper", vec!["--non-interactive", "remove", name])
+    } else {
+        return Err(Error::Refused(format!(
+            "no supported package manager to remove system package '{name}'"
+        )));
+    };
+    let escalate = escalate();
+    let status = std::process::Command::new(escalate)
+        .arg(pm)
+        .args(&args)
+        .status()
+        .map_err(|e| Error::Command(format!("system removal failed: {e}")))?;
+    if !status.success() {
+        return Err(Error::Command(format!(
+            "system package removal failed for '{name}'"
+        )));
+    }
+    Ok(format!("Removed system package '{name}' via {pm}."))
+}

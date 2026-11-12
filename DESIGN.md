@@ -44,9 +44,10 @@ already have.
 dropin/
   crates/
     dropin-core/      # detection, handlers, ledger, .desktop generation
-    dropin-cli/       # `dropin install|remove|list|info|doctor`
-    dropin-gui/       # M2: double-click dialog (iced)
+    dropin-cli/       # `dropin install|remove|list|info|doctor|...`
 ```
+
+The GUI was removed in v0.2.1; dropin is CLI-only.
 
 ### Format handling
 
@@ -54,11 +55,11 @@ dropin/
 |---|---|
 | `.AppImage` | Move to `~/Applications`, `chmod +x`, extract icon + name from embedded `.desktop`, write menu entry |
 | `.deb` | Extract `data.tar.*` to `~/.local/opt/<pkg>`, adopt bundled `.desktop` (paths rewritten), symlink `usr/bin/*` → `~/.local/bin`. Optional: system install via `apt` + polkit |
-| `.rpm` | Same strategy via `rpm2cpio` (M1.1) |
+| `.rpm` | Same strategy through a pure-Rust RPM/cpio reader (no `rpm2cpio` needed) |
 | `.flatpakref` / `.flatpak` | `flatpak install --user` |
-| `.tar.gz` / `.tar.xz` / `.tar.bz2` / `.zip` | Sniff contents: app-looking (ELF executables, `.desktop`, Electron `app.asar`) → extract to `~/.local/opt/<app>`, adopt or generate `.desktop`, symlink binaries. Data-looking → refuse, suggest the archive manager |
-| `.sh` / `.run` / `.bin` | Confirm, then execute (tracked as "external": we record what we *can't* track) |
-| `.exe` / `.msi` | Hand to Wine if present, else explain |
+| `.tar.gz` / `.tar.xz` / `.tar.bz2` / `.zip` | Sniff contents: app-looking (ELF executables, Windows `.exe`, `.desktop`, Electron `app.asar`) → extract to `~/.local/opt/<app>`, adopt or generate `.desktop`, symlink binaries. Windows games get a Wine/Proton prefix. Data-looking → refuse, suggest the archive manager |
+| `.sh` / `.run` / `.bin` | Audit, confirm, then run sandboxed under bubblewrap with a hardlink snapshot for undo |
+| `.exe` / `.msi` | Wine for apps, GE-Proton via umu-launcher for games; isolated prefix per app |
 
 Detection is by magic bytes first, extension second — never extension alone.
 
@@ -66,18 +67,19 @@ Detection is by magic bytes first, extension second — never extension alone.
 
 SQLite at `~/.local/share/dropin/ledger.db`:
 
-- `installs(id, name, format, version, source_path, source_sha256, install_root, external, created_at)`
+- `installs(id, name, format, version, source_path, source_sha256, install_root, external, update_info, verified, github_repo, signing_key, env_vars, created_at)`
 - `files(install_id, path)` — every path created/moved, for reversal
 
 `remove` deletes recorded paths (files, symlinks, `.desktop` entries, icons),
-then drops the rows. Anything installed with root (`external` system installs)
-gets removed through the same package manager that installed it.
+then drops the rows. System installs (`--system`) are removed through the same
+package manager that installed them; flatpaks through `flatpak uninstall`;
+adopted games keep the user's files and only dropin's launchers are removed.
 
 ### Security model
 
-- Scripts require explicit confirmation; the GUI shows publisher, size, sha256.
-- `.sig`/`.asc` sidecar files are verified when present (warn, don't block, when absent).
-- System installs only via an explicit `--system` flag → polkit prompt.
+- Scripts require explicit confirmation; the CLI shows the audit findings, size, and sha256.
+- `.sig`/`.asc` sidecar files are checked when present; the issuer key is pinned (TOFU) and updates refuse a changed, missing, or unreadable signature once a key is pinned.
+- System installs only via an explicit `--system` flag → polkit/sudo prompt.
 - Path traversal in archives is rejected (no `../`, no absolute paths on extract).
 
 ## Milestones
@@ -86,14 +88,11 @@ gets removed through the same package manager that installed it.
   tarball / deb / flatpakref / script handlers, `install|remove|list|info|doctor`.
 - **M1.1 (done 2026-10-09):** pure-Rust `.rpm` handler (RPM header + cpio reader,
   no rpm2cpio needed), rootless like `.deb`.
-- **M2 (in progress):** `dropin-gui` double-click dialog (egui): app name, version,
-  what-will-happen, Install/Cancel, progress, trust checkbox for scripts.
-  `dropin integrate` registers MIME handlers (AppImage/deb/rpm/flatpakref/scripts;
-  archives deliberately stay with the archive manager).
-- **M3 (done 2026-10-09):** File-manager integration — `dropin integrate` now also
-  installs "Install as application" context entries for Dolphin (service menu),
-  Nemo (.nemo_action), Nautilus (Python extension), and Thunar (uca.xml merge
-  with backup + idempotent reinstall); `unintegrate` removes everything.
+- **M2 (removed in v0.2.1):** the `dropin-gui` double-click dialog and the
+  `dropin integrate` file-manager hooks were removed when the project went
+  CLI-only. The CLI is the supported interface.
+- **M3 (removed in v0.2.1):** file-manager integration (`integrate` /
+  `unintegrate`) was part of the GUI-era surface and is no longer shipped.
 - **M4 (done 2026-10-09):** Update awareness — `dropin update [name|--all]`, on demand
   only, never in the background. The ledger stores each AppImage's embedded
   `X-AppImage-UpdateInformation` channel at install (schema migrated); update

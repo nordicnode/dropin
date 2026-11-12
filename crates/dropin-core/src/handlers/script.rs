@@ -261,14 +261,25 @@ fn has_system_path(lower: &str) -> bool {
 
 pub fn plan(src: &Path) -> Result<InstallPlan> {
     let d = detect::detect(src)?;
+    let mut steps = vec![
+        "You confirm, then the vendor's installer runs sandboxed".into(),
+        "Everything it changes is logged and fully reversible".into(),
+        "dropin records it as an external install".into(),
+    ];
+    // Surface the static audit in `dropin info` too, not just at install
+    // time, so the dry run actually tells you what the script does.
+    for f in audit(src) {
+        let tag = match f.severity {
+            Severity::Info => "note",
+            Severity::Warning => "warning",
+            Severity::Danger => "DANGER",
+        };
+        steps.push(format!("[{tag}] {}", f.title));
+    }
     Ok(InstallPlan {
         app_name: d.name_hint.clone(),
         version: None,
-        steps: vec![
-            "You confirm, then the vendor's installer runs sandboxed".into(),
-            "Everything it changes is logged and fully reversible".into(),
-            "dropin records it as an external install".into(),
-        ],
+        steps,
         needs_root: false,
         needs_confirmation: true,
     })
@@ -346,26 +357,40 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
         // If it doesn't exist on the host (e.g. /lib32), skip it.
     }
     cmd.args(["--ro-bind", "/etc", "/etc"]);
+    // Fresh /tmp, /proc and /dev first. Anything bound later (including a
+    // HOME or installer that happens to live under /tmp) must come after
+    // this, because later mounts win.
+    cmd.args(["--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev"]);
     // HOME read-only, then punch writable holes for the install folders.
     cmd.args(["--ro-bind", &home_s, &home_s]);
     for root in writable_roots() {
         let s = root.to_string_lossy().to_string();
         cmd.args(["--bind", &s, &s]);
     }
-    // The installer file itself must be visible inside the sandbox.
-    // (Bound before /tmp goes tmpfs, in case it lives there.)
+    // Hide secrets even from reading. (After the binds: later mounts win.)
+    // Only mount over paths that actually exist: bwrap cannot create a
+    // mountpoint inside the read-only HOME bind, so a missing ~/.ssh would
+    // abort the whole sandbox.
+    for secret in [".ssh", ".gnupg"] {
+        let p = home.join(secret);
+        if p.is_dir() {
+            cmd.args(["--tmpfs", &p.to_string_lossy()]);
+        }
+    }
+    // The installer file itself must be visible inside the sandbox. Bind it
+    // after the /tmp tmpfs so a script that lives under /tmp is not hidden.
     if let Some(src_s) = src.to_str() {
         cmd.args(["--ro-bind", src_s, src_s]);
     }
-    // Hide secrets even from reading. (After the binds: later mounts win.)
-    cmd.args(["--tmpfs", &format!("{home_s}/.ssh")]);
-    cmd.args(["--tmpfs", &format!("{home_s}/.gnupg")]);
-    cmd.args(["--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev"]);
     if is_sh {
         cmd.arg("sh").arg(src);
     } else {
         cmd.arg(src);
     }
+    // The sandbox's HOME must match the directory we bound, otherwise an
+    // installer writing to $HOME lands in the ephemeral sandbox root and its
+    // files vanish when the sandbox exits.
+    cmd.env("HOME", &home_s);
     Ok(cmd)
 }
 
@@ -488,6 +513,13 @@ fn mtime_nanos(m: &std::fs::Metadata) -> i128 {
 /// Snapshot every file in the writable install folders.
 fn snapshot_writable() -> FileMap {
     let mut map = FileMap::new();
+    // dropin's own state (ledger, logs, undo records, backups) is not part of
+    // the installer's footprint. Excluding it keeps undo from deleting the
+    // very log/record it is about to use.
+    let own_state = [
+        crate::home_dir().join(".local/share/dropin"),
+        crate::home_dir().join(".cache/dropin"),
+    ];
     for root in writable_roots() {
         for entry in walkdir::WalkDir::new(&root)
             .into_iter()
@@ -495,6 +527,9 @@ fn snapshot_writable() -> FileMap {
             .take(200_000)
         {
             let p = entry.path().to_path_buf();
+            if own_state.iter().any(|s| p.starts_with(s)) {
+                continue;
+            }
             let ft = entry.file_type();
             if ft.is_file() {
                 if let Ok(m) = entry.metadata() {
@@ -849,6 +884,7 @@ pub fn print_findings(findings: &[Finding]) {
 pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let d = detect::detect(src)?;
     let slug = crate::slugify(&d.name_hint);
+    super::ensure_not_installed(&slug)?;
     let findings = audit(src);
     let allow_net = confirm(&d.name_hint, src, opts, &findings)?;
 
@@ -1019,6 +1055,19 @@ mod tests {
                 .iter()
                 .any(|f| f.severity == Severity::Warning && f.title.contains("administrator")),
             "sudo flagged"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn plan_includes_audit_findings() {
+        let d = tmpdir("plan");
+        let p = write_script(&d, "evil.sh", "#!/bin/sh\nrm -rf /tmp/junk\n");
+        let plan = plan(&p).unwrap();
+        assert!(
+            plan.steps.iter().any(|s| s.contains("[DANGER]")),
+            "dry run should surface the audit: {:?}",
+            plan.steps
         );
         let _ = std::fs::remove_dir_all(&d);
     }

@@ -7,6 +7,16 @@ use crate::{have, slugify, Error, Result, UserDirs};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+/// Removes a temporary directory when it goes out of scope, including on
+/// early returns and errors.
+struct TempDirGuard(PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub fn plan_for(src: &Path) -> Result<InstallPlan> {
     let d = detect::detect(src)?;
     match d.format {
@@ -45,6 +55,20 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         },
         None => false,
     };
+    // Signature check before anything is installed: pin the issuer key
+    // (TOFU) if a detached signature accompanies the source file. A
+    // signature that exists but can't be parsed is reported, not ignored.
+    let signing_key = match crate::signatures::check(src) {
+        crate::signatures::SigCheck::Found { fingerprint } => {
+            println!("dropin: signature found, key {fingerprint} pinned (trust on first use)");
+            Some(fingerprint)
+        }
+        crate::signatures::SigCheck::Invalid(why) => {
+            eprintln!("dropin: warning: a signature file is present but could not be read ({why}); continuing without pinning");
+            None
+        }
+        crate::signatures::SigCheck::None => None,
+    };
     let outcome = match d.format {
         Format::AppImage => handlers::appimage::install(src, opts)?,
         Format::Tarball | Format::Zip => handlers::tarball::install(src, opts)?,
@@ -56,15 +80,6 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         Format::Unknown => return Err(Error::Unsupported("unknown format".into())),
     };
     let ledger = Ledger::open()?;
-    // Signature check: pin the issuer key (TOFU) if a detached
-    // signature accompanies the source file.
-    let signing_key = match crate::signatures::check(src) {
-        crate::signatures::SigCheck::Found { fingerprint } => {
-            println!("dropin: signature found, key {fingerprint} pinned (trust on first use)");
-            Some(fingerprint)
-        }
-        crate::signatures::SigCheck::None => None,
-    };
     ledger.record(&crate::ledger::NewInstall {
         name: outcome.name.clone(),
         format: {
@@ -116,13 +131,19 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
     if inst.external {
         // Delegate to the owning system.
         let msg = if inst.format.starts_with("Flatpak") {
-            // Ledger name is the slugified app id; the original id had dots.
-            // Try the source ref first, then fall back.
-            let id = std::fs::read_to_string(&inst.source_path)
-                .ok()
-                .and_then(|t| {
-                    t.lines()
-                        .find_map(|l| l.trim().strip_prefix("Name=").map(|s| s.trim().to_string()))
+            // Prefer the real app id stored at install time; fall back to the
+            // source .flatpakref, then the slug.
+            let id = inst
+                .update_info
+                .clone()
+                .or_else(|| {
+                    std::fs::read_to_string(&inst.source_path)
+                        .ok()
+                        .and_then(|t| {
+                            t.lines().find_map(|l| {
+                                l.trim().strip_prefix("Name=").map(|s| s.trim().to_string())
+                            })
+                        })
                 })
                 .unwrap_or_else(|| slug.clone());
             handlers::flatpak::remove_external(&id)?;
@@ -137,7 +158,8 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
                     inst.name
                 ),
             }
-        } else if inst.format == "adopted" {
+        } else if inst.format == "adopted" || (inst.external && inst.format == "Windows executable")
+        {
             // Adopted games: delete dropin's own files (.desktop, bin symlink,
             // wine prefix) but leave the user's game files in place.
             let dirs = UserDirs::new();
@@ -163,6 +185,16 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
                 if removed == 1 { "" } else { "s" },
                 game_dir
             )
+        } else if inst.format.contains("Debian") || inst.format.contains("RPM") {
+            // Installed with --system: the package manager owns the files,
+            // so remove it through the same package manager.
+            match handlers::remove_system_package(&inst.name) {
+                Ok(m) => m,
+                Err(e) => format!(
+                    "Removed '{}' from the list, but the system package could not be removed: {e}",
+                    inst.name
+                ),
+            }
         } else {
             format!(
                 "'{}' was installed externally ({}); removed its ledger entry, but files installed by the vendor script / system package manager remain — use that tool to fully uninstall",
@@ -271,6 +303,12 @@ pub fn launch(name: &str) -> Result<String> {
             }
         }
     }
+    // Resolve a bare command name (Exec=myapp) to a real path: the dropin
+    // bin dir first, then PATH. Without this, a bundled .desktop that says
+    // `Exec=myapp` fails even though dropin linked myapp into ~/.local/bin.
+    if let Some(e) = exe.take() {
+        exe = resolve_command(&e, &dirs.bin);
+    }
     // Fallback: find an executable in the tracked files.
     if exe.is_none() {
         exe = inst.files.iter().map(PathBuf::from).find(|p| {
@@ -333,7 +371,12 @@ pub fn launch(name: &str) -> Result<String> {
     std::thread::sleep(std::time::Duration::from_millis(500));
     match child.try_wait() {
         Ok(Some(status)) => {
-            // Process exited immediately.
+            // Process exited immediately. A clean exit (status 0) is normal
+            // for CLI tools and apps that fork a GUI and return; only a
+            // non-zero status means the launch actually failed.
+            if status.success() {
+                return Ok(format!("Launched '{name}' (exited)."));
+            }
             let mut stderr = String::new();
             if let Some(mut err) = child.stderr.take() {
                 use std::io::Read;
@@ -361,6 +404,27 @@ pub fn launch(name: &str) -> Result<String> {
         }
     }
     Ok(format!("Launched '{name}'."))
+}
+
+/// Resolve a command from a desktop entry to a real path.
+/// Absolute paths and paths with a directory component are used as-is;
+/// bare names are looked up in dropin's bin dir, then `PATH`.
+fn resolve_command(cmd: &Path, bin_dir: &Path) -> Option<PathBuf> {
+    if cmd.is_absolute() || cmd.components().count() > 1 {
+        return cmd.exists().then(|| cmd.to_path_buf());
+    }
+    let local = bin_dir.join(cmd);
+    if local.is_file() {
+        return Some(local);
+    }
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let p = dir.join(cmd);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Check if a file is an ELF binary (by magic bytes).
@@ -923,7 +987,8 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
     };
 
     // Download the new AppImage.
-    let tmpdir = std::env::temp_dir().join(format!("dropin-gh-{}", std::process::id()));
+    let tmpdir = crate::unique_temp_dir("dropin-gh");
+    let _tmp_guard = TempDirGuard(tmpdir.clone());
     if std::fs::create_dir_all(&tmpdir).is_err() {
         return UpdateReport {
             name,
@@ -962,6 +1027,9 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
 
     // Signature continuity: if the new download is signed, its key must
     // match the pinned key (or pin it now, TOFU, if none was pinned).
+    // If a key was pinned and the new release is unsigned or its signature
+    // is unreadable, refuse: otherwise stripping the .asc would bypass the
+    // continuity check entirely.
     match crate::signatures::check(&downloaded) {
         crate::signatures::SigCheck::Found { fingerprint } => {
             match &inst.signing_key {
@@ -982,7 +1050,26 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
                 }
             }
         }
-        crate::signatures::SigCheck::None => {}
+        crate::signatures::SigCheck::Invalid(why) => {
+            if inst.signing_key.is_some() {
+                return UpdateReport {
+                    name,
+                    status: UpdateStatus::Failed(format!(
+                        "release signature is unreadable ({why}) but this app was previously signed — refusing update"
+                    )),
+                };
+            }
+        }
+        crate::signatures::SigCheck::None => {
+            if let Some(pinned) = &inst.signing_key {
+                return UpdateReport {
+                    name,
+                    status: UpdateStatus::Failed(format!(
+                        "release is unsigned, but this app was previously signed with key {pinned} — refusing update. Re-download manually if you trust this release."
+                    )),
+                };
+            }
+        }
     }
 
     // Generation-based update: place the new AppImage in a new version dir,
@@ -1207,9 +1294,19 @@ pub fn doctor() -> Vec<(String, bool, String)> {
             "menu refresh".into(),
         ),
         (
+            "bwrap".into(),
+            have("bwrap"),
+            "sandboxed installer scripts (required for .sh/.run/.bin)".into(),
+        ),
+        (
             "wine".into(),
-            have("wine"),
+            handlers::wine::have_wine(),
             ".exe installer support (optional)".into(),
+        ),
+        (
+            "umu-run".into(),
+            handlers::proton::have_umu(),
+            "GE-Proton game support (optional)".into(),
         ),
         (
             "appimageupdatetool".into(),
@@ -1227,6 +1324,77 @@ pub fn doctor() -> Vec<(String, bool, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rollback_flips_active_to_previous_generation() {
+        let d = crate::unique_temp_dir("dropin-rollback");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let dirs = UserDirs::new();
+            dirs.ensure().unwrap();
+            let app_dir = dirs.applications.join("demo");
+            let v1 = app_dir.join("1.0");
+            let v2 = app_dir.join("2.0");
+            std::fs::create_dir_all(&v1).unwrap();
+            std::fs::create_dir_all(&v2).unwrap();
+            let img1 = v1.join("demo.AppImage");
+            let img2 = v2.join("demo.AppImage");
+            std::fs::write(&img1, b"v1").unwrap();
+            std::fs::write(&img2, b"v2").unwrap();
+            // Make v1 older so mtime ordering is deterministic.
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+            let _ = filetime_set(&v1, old);
+            let _ = filetime_set(&img1, old);
+            let _ = filetime_set(&v2, std::time::SystemTime::now());
+            let _ = filetime_set(&img2, std::time::SystemTime::now());
+            let active = app_dir.join("active");
+            crate::handlers::appimage::flip_symlink(&active, &img2).unwrap();
+
+            let ledger = Ledger::open().unwrap();
+            ledger
+                .record(&crate::ledger::NewInstall {
+                    name: "demo".into(),
+                    format: "AppImage".into(),
+                    version: Some("2.0".into()),
+                    source_path: PathBuf::from("/tmp/demo.AppImage"),
+                    files: vec![app_dir.clone()],
+                    ..Default::default()
+                })
+                .unwrap();
+
+            assert!(can_rollback("demo"));
+            let msg = rollback("demo").unwrap();
+            assert!(msg.contains("1.0"), "rolled back to 1.0: {msg}");
+            let target = std::fs::read_link(&active).unwrap();
+            let abs = if target.is_absolute() {
+                target
+            } else {
+                active.parent().unwrap().join(target)
+            };
+            assert_eq!(std::fs::read(&abs).unwrap(), b"v1");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Set a file's mtime without pulling in a new dependency.
+    fn filetime_set(path: &Path, t: std::time::SystemTime) -> std::io::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let secs = t
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let times = [libc::timespec {
+            tv_sec: secs,
+            tv_nsec: 0,
+        }; 2];
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
 
     #[test]
     fn migrate_flat_to_generations() {

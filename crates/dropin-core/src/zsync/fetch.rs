@@ -22,6 +22,9 @@ pub enum RangeBody {
 pub fn get_range(url: &str, start: u64, len: u64) -> Result<RangeBody, String> {
     let end = start.saturating_add(len).saturating_sub(1);
     let mut res = ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("Range", &format!("bytes={start}-{end}"))
         .header("User-Agent", super::USER_AGENT)
         .call()
@@ -53,6 +56,9 @@ pub fn get_range(url: &str, start: u64, len: u64) -> Result<RangeBody, String> {
 pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), String> {
     let tmp = path.with_extension("dropin-part");
     let mut res = ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("User-Agent", super::USER_AGENT)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
@@ -87,6 +93,9 @@ pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), St
 /// GET the whole file, refusing anything over `max_bytes`.
 pub fn get_all(url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
     let mut res = ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("User-Agent", super::USER_AGENT)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
@@ -118,6 +127,9 @@ pub fn get_range_into(
 ) -> Result<(), String> {
     let end = start.saturating_add(len).saturating_sub(1);
     let mut res = ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
         .header("Range", &format!("bytes={start}-{end}"))
         .header("User-Agent", super::USER_AGENT)
         .call()

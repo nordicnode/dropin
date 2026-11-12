@@ -50,7 +50,9 @@ pub fn install(src: &Path, _opts: &InstallOptions) -> Result<InstallOutcome> {
         install_root: None,
         paths: vec![],
         external: true, // flatpak owns the files; removal delegates to flatpak
-        update_info: None,
+        // Keep the real app id (dots intact) so removal works even after the
+        // original .flatpakref is gone.
+        update_info: Some(id),
     })
 }
 

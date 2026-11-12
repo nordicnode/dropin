@@ -117,7 +117,7 @@ fn is_elf_executable(path: &Path) -> bool {
 }
 
 /// Options for adopting a game.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AdoptOptions {
     /// The main executable (relative to game_dir). If None, we pick the best guess.
     pub main_exe: Option<String>,
@@ -283,29 +283,29 @@ pub fn adopt(game_dir: &Path, opts: &AdoptOptions) -> Result<AdoptOutcome> {
     paths.append(&mut desktop_extra);
 
     // Symlink into ~/.local/bin.
-    // If the binary name collides with an existing file, fall back to the
-    // slug name so the adopted game still gets a launcher.
+    // If the binary name collides with an existing file, try the slug and
+    // then a suffixed name so the adopted game still gets a launcher.
     if let Some(bin_name) = launch_exe.file_name() {
         let bin_name = bin_name.to_string_lossy();
-        let mut link = dirs.bin.join(bin_name.as_ref());
-        if link.exists() || link.is_symlink() {
-            // Collision: try slug-based name.
-            let alt = dirs.bin.join(&slug);
-            if !alt.exists() && !alt.is_symlink() {
-                link = alt;
-            } else {
-                // Both taken; skip the symlink (don't overwrite user's files).
-                // The .desktop entry still works.
-                link = PathBuf::new(); // sentinel for "skip"
-            }
-        }
-        if !link.as_os_str().is_empty() {
+        let candidates = [
+            bin_name.to_string(),
+            slug.clone(),
+            format!("{slug}-adopted"),
+            format!("{slug}-dropin"),
+        ];
+        let link = candidates
+            .into_iter()
+            .map(|name| dirs.bin.join(name))
+            .find(|p| !p.exists() && !p.is_symlink());
+        if let Some(link) = link {
             #[cfg(unix)]
             {
                 std::os::unix::fs::symlink(&launch_exe, &link)?;
                 paths.push(link);
             }
         }
+        // If every candidate is taken, skip the symlink rather than
+        // overwriting the user's files. The .desktop entry still works.
     }
 
     // Record in ledger.
@@ -431,6 +431,29 @@ mod tests {
             std::fs::create_dir_all(&home).unwrap();
             std::fs::write(&file, b"hi").unwrap();
             assert!(scan_dir(&file).is_err());
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn adopt_bin_collision_uses_suffixed_name() {
+        let d = crate::unique_temp_dir("dropin-adopt-collide");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let game = home.join("collide");
+            std::fs::create_dir_all(&game).unwrap();
+            let exe = game.join("collide");
+            std::fs::write(&exe, [0x7f, b'E', b'L', b'F', 0, 0, 0, 0]).unwrap();
+            // Pre-existing file with the same name in ~/.local/bin.
+            let bin = home.join(".local/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("collide"), b"user file").unwrap();
+
+            let outcome = adopt(&game, &AdoptOptions::default()).unwrap();
+            assert_eq!(outcome.name, "collide");
+            // The user's file is untouched and a suffixed launcher exists.
+            assert_eq!(std::fs::read(bin.join("collide")).unwrap(), b"user file");
+            assert!(bin.join("collide-adopted").is_symlink());
         });
         let _ = std::fs::remove_dir_all(&d);
     }

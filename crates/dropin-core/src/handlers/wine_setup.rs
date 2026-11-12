@@ -155,60 +155,46 @@ pub fn install_portable_wine(progress: &dyn Fn(&str)) -> Result<PathBuf> {
 
     progress("Finding the latest portable Wine build…");
 
-    // Query GitHub API for the latest release.
-    let api_out = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "30",
-            "https://api.github.com/repos/Kron4ek/Wine-Builds/releases/latest",
-        ])
-        .output()
+    // Query GitHub API for the latest release. Use the in-process HTTP
+    // client so this works without curl installed.
+    let mut api_res = ureq::get("https://api.github.com/repos/Kron4ek/Wine-Builds/releases/latest")
+        .header("User-Agent", "dropin")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .call()
         .map_err(|e| Error::Command(format!("couldn't reach GitHub: {e}")))?;
-
-    if !api_out.status.success() {
-        return Err(Error::Command("couldn't fetch Wine release info".into()));
-    }
-
-    let api_text = String::from_utf8_lossy(&api_out.stdout);
+    let api_text = api_res
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| Error::Command(format!("couldn't read GitHub response: {e}")))?;
     // Find a suitable asset: prefer wine-tkg (has patches), amd64, .tar.xz
     let asset_url = find_wine_asset(&api_text)
         .ok_or_else(|| Error::Command("couldn't find a suitable Wine build".into()))?;
 
     progress("Downloading Wine (this is a large download, please wait)…");
     let tarball = dir.join("wine.tar.xz");
-    let status = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "600",
-            "-o",
-            tarball.to_str().unwrap(),
-            &asset_url,
-        ])
-        .status()
+    let mut res = ureq::get(&asset_url)
+        .header("User-Agent", "dropin")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(600)))
+        .build()
+        .call()
         .map_err(|e| Error::Command(format!("download failed: {e}")))?;
-
-    if !status.success() || !tarball.exists() {
+    let mut out = std::fs::File::create(&tarball)
+        .map_err(|e| Error::Command(format!("couldn't create download file: {e}")))?;
+    std::io::copy(&mut res.body_mut().as_reader(), &mut out)
+        .map_err(|e| Error::Command(format!("download failed: {e}")))?;
+    drop(out);
+    if !tarball.exists() {
         return Err(Error::Command("Wine download failed".into()));
     }
 
     progress("Extracting Wine…");
-    let status = std::process::Command::new("tar")
-        .args([
-            "-xf",
-            tarball.to_str().unwrap(),
-            "-C",
-            dir.to_str().unwrap(),
-            "--strip-components=1",
-        ])
-        .status()
-        .map_err(|e| Error::Command(format!("extraction failed: {e}")))?;
-
+    // Pure-Rust xz+tar extraction: no external `tar` needed.
+    let extract = super::tarball::extract_tar(&tarball, &dir, 1);
     let _ = std::fs::remove_file(&tarball);
-    if !status.success() {
-        return Err(Error::Command("Wine extraction failed".into()));
-    }
+    extract.map_err(|e| Error::Command(format!("Wine extraction failed: {e}")))?;
 
     let wine_bin = dir.join("bin/wine");
     if !wine_bin.exists() {
@@ -392,21 +378,17 @@ pub fn setup_dxvk(prefix: &std::path::Path, progress: &dyn Fn(&str)) -> Result<(
 }
 
 fn download_dxvk(dir: &std::path::Path, _progress: &dyn Fn(&str)) -> Result<PathBuf> {
-    let api_out = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "30",
-            "https://api.github.com/repos/doitsujin/dxvk/releases/latest",
-        ])
-        .output()
+    let mut api_res = ureq::get("https://api.github.com/repos/doitsujin/dxvk/releases/latest")
+        .header("User-Agent", "dropin")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
+        .call()
         .map_err(|e| Error::Command(format!("couldn't reach GitHub: {e}")))?;
-
-    if !api_out.status.success() {
-        return Err(Error::Command("couldn't fetch DXVK release info".into()));
-    }
-
-    let api_text = String::from_utf8_lossy(&api_out.stdout);
+    let api_text = api_res
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| Error::Command(format!("couldn't read GitHub response: {e}")))?;
     let asset_url = api_text
         .lines()
         .filter_map(|l| {
@@ -423,37 +405,23 @@ fn download_dxvk(dir: &std::path::Path, _progress: &dyn Fn(&str)) -> Result<Path
         .ok_or_else(|| Error::Command("couldn't find a DXVK build".into()))?;
 
     let tarball = dir.join("dxvk.tar.gz");
-    let status = std::process::Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "300",
-            "-o",
-            tarball.to_str().unwrap(),
-            &asset_url,
-        ])
-        .status()
+    let mut res = ureq::get(&asset_url)
+        .header("User-Agent", "dropin")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(300)))
+        .build()
+        .call()
         .map_err(|e| Error::Command(format!("download failed: {e}")))?;
-
-    if !status.success() {
-        return Err(Error::Command("DXVK download failed".into()));
-    }
+    let mut out = std::fs::File::create(&tarball)
+        .map_err(|e| Error::Command(format!("couldn't create download file: {e}")))?;
+    std::io::copy(&mut res.body_mut().as_reader(), &mut out)
+        .map_err(|e| Error::Command(format!("download failed: {e}")))?;
+    drop(out);
 
     // Extract; DXVK tarballs contain a top-level dxvk-<version> dir.
-    let status = std::process::Command::new("tar")
-        .args([
-            "-xzf",
-            tarball.to_str().unwrap(),
-            "-C",
-            dir.to_str().unwrap(),
-        ])
-        .status()
-        .map_err(|e| Error::Command(format!("extraction failed: {e}")))?;
+    let extract = super::tarball::extract_tar(&tarball, dir, 0);
     let _ = std::fs::remove_file(&tarball);
-
-    if !status.success() {
-        return Err(Error::Command("DXVK extraction failed".into()));
-    }
+    extract.map_err(|e| Error::Command(format!("DXVK extraction failed: {e}")))?;
 
     // Find the extracted dir.
     std::fs::read_dir(dir)?

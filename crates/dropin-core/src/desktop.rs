@@ -174,13 +174,48 @@ fn rewrite_exec(exec: &str, install_root: &Path, is_appimage: bool) -> String {
     } else if bin.starts_with('/') {
         bin.to_string() // already absolute elsewhere; leave it
     } else {
-        install_root.join(bin).display().to_string()
+        resolve_relative_bin(bin, install_root)
+            .unwrap_or_else(|| install_root.join(bin))
+            .display()
+            .to_string()
     };
     if rest.is_empty() {
         new_bin
     } else {
         format!("{new_bin} {}", rest.join(" "))
     }
+}
+
+/// Find a relative `Exec=` binary inside an extracted install root.
+///
+/// Bundled .desktop files commonly say `Exec=myapp` even though the binary
+/// lives in `bin/` or `usr/bin/`. Joining the name straight onto the root
+/// produces a path that does not exist, so try the usual locations first.
+fn resolve_relative_bin(bin: &str, install_root: &Path) -> Option<PathBuf> {
+    let direct = install_root.join(bin);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    for sub in ["bin", "usr/bin", "usr/local/bin", "opt/bin"] {
+        let p = install_root.join(sub).join(bin);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    // Last resort: a bounded search for a file with this exact name.
+    let mut found = None;
+    for entry in walkdir::WalkDir::new(install_root)
+        .max_depth(6)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .take(20_000)
+    {
+        if entry.file_type().is_file() && entry.file_name().to_string_lossy() == bin {
+            found = Some(entry.path().to_path_buf());
+            break;
+        }
+    }
+    found
 }
 
 /// Install an icon referenced by a .desktop file into the hicolor theme.
@@ -301,6 +336,18 @@ mod tests {
         );
         // Absolute paths still pass through.
         assert_eq!(rewrite_exec("/usr/bin/app", img, true), "/usr/bin/app");
+    }
+
+    #[test]
+    fn rewrite_exec_resolves_binary_in_bin_dir() {
+        // Bundled .desktop files often say Exec=myapp while the binary lives
+        // in bin/. The rewrite must find it instead of producing <root>/myapp.
+        let root = crate::unique_temp_dir("dropin-desktop-exec");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin/myapp"), b"#!/bin/sh\n").unwrap();
+        let got = rewrite_exec("myapp --flag", &root, false);
+        assert_eq!(got, format!("{} --flag", root.join("bin/myapp").display()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

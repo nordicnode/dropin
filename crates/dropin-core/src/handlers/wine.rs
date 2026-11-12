@@ -63,8 +63,13 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
                 format!("Add a menu entry that launches it with {runner_label}"),
             ]
         } else {
+            let setup = if is_game {
+                "dropin setup-proton"
+            } else {
+                "dropin setup-wine"
+            };
             vec![
-                format!("{runner_label} isn't set up yet — dropin will set it up automatically"),
+                format!("{runner_label} isn't set up yet — run `{setup}` first"),
                 "Then create an isolated prefix and run the installer".into(),
             ]
         },
@@ -97,7 +102,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             if !have_wine() {
                 return Err(Error::Refused(
                     "Wine isn't installed, so Windows apps can't run yet.\n\
-                     Run `dropin setup-wine` or use the GUI to set it up automatically."
+                     Run `dropin setup-wine` to set it up automatically."
                         .into(),
                 ));
             }
@@ -106,7 +111,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             if !super::proton::have_umu() {
                 return Err(Error::Refused(
                     "Proton support isn't set up yet.\n\
-                     Run `dropin setup-proton` or use the GUI to set it up automatically."
+                     Run `dropin setup-proton` to set it up automatically."
                         .into(),
                 ));
             }
@@ -114,6 +119,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     }
 
     let slug = slugify(&d.name_hint);
+    super::ensure_not_installed(&slug)?;
     let dirs = UserDirs::new();
     dirs.ensure()?;
 
@@ -262,9 +268,14 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
 
 /// Heuristic: find the most likely main .exe in a prefix.
 fn find_installed_exe(prefix: &Path) -> Option<PathBuf> {
-    let drive_c = prefix.join("drive_c");
+    find_main_exe(&prefix.join("drive_c"))
+}
+
+/// Find the most likely main .exe under an arbitrary directory.
+/// Used for Wine prefixes (`drive_c`) and for adopted game folders.
+pub fn find_main_exe(dir: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
-    for entry in walkdir::WalkDir::new(&drive_c)
+    for entry in walkdir::WalkDir::new(dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .take(5000)
@@ -316,6 +327,13 @@ pub fn set_runner(slug: &str, runner: super::proton::Runner) -> Result<String> {
     }
 
     let exe = find_installed_exe(&prefix)
+        .or_else(|| {
+            // Adopted Windows games keep their .exe in the user's folder,
+            // not inside the Wine prefix.
+            inst.install_root
+                .as_deref()
+                .and_then(|root| find_main_exe(std::path::Path::new(root)))
+        })
         .ok_or_else(|| Error::Command("couldn't find the app's executable".into()))?;
 
     let dirs = UserDirs::new();

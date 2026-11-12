@@ -30,26 +30,38 @@ pub(crate) mod test_env {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
+    /// Restores the previous HOME/DROPIN_HOME even if the test panics.
+    struct EnvRestore {
+        dropin: Option<String>,
+        home: Option<String>,
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.dropin {
+                Some(v) => std::env::set_var("DROPIN_HOME", v),
+                None => std::env::remove_var("DROPIN_HOME"),
+            }
+            match &self.home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
     /// Run `f` with `HOME` and `DROPIN_HOME` pointed at `home`, restoring
     /// both afterwards. Serialized against all other users of this helper.
     pub(crate) fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
         // Recover from a poisoned lock: a panicking test must not cascade
         // into every other test that redirects HOME.
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let old_dropin = std::env::var("DROPIN_HOME").ok();
-        let old_home = std::env::var("HOME").ok();
+        let _restore = EnvRestore {
+            dropin: std::env::var("DROPIN_HOME").ok(),
+            home: std::env::var("HOME").ok(),
+        };
         std::env::set_var("DROPIN_HOME", home);
         std::env::set_var("HOME", home);
-        let result = f();
-        match old_dropin {
-            Some(v) => std::env::set_var("DROPIN_HOME", v),
-            None => std::env::remove_var("DROPIN_HOME"),
-        }
-        match old_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        result
+        f()
     }
 }
 

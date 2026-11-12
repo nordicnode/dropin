@@ -8,7 +8,7 @@
 
 use super::{assert_safe_member, sha256_of, InstallOptions, InstallOutcome, InstallPlan};
 use crate::desktop::{adopt_desktop_file, parse_desktop_file};
-use crate::{have, slugify, Error, Result, UserDirs};
+use crate::{slugify, Error, Result, UserDirs};
 use flate2::read::GzDecoder;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -119,26 +119,19 @@ fn payload_bytes(path: &Path, meta: &RpmMeta) -> Result<Vec<u8>> {
             Ok(out)
         }
         "none" | "" => Ok(raw.to_vec()),
-        other @ ("xz" | "zstd") => {
-            let tool = if other == "xz" { "unxz" } else { "unzstd" };
-            if !have(tool) {
-                return Err(Error::Command(format!(
-                    "this RPM uses {other} compression but `{tool}` is not installed"
-                )));
-            }
-            let tmp = crate::unique_temp_dir("dropin-rpmpay");
-            std::fs::write(&tmp, raw)?;
-            let out = std::process::Command::new(tool)
-                .args(["-c", tmp.to_str().unwrap()])
-                .output()
-                .map_err(|e| Error::Command(format!("{tool} failed: {e}")))?;
-            let _ = std::fs::remove_file(&tmp);
-            if !out.status.success() {
-                return Err(Error::Command(format!(
-                    "{tool} could not decompress payload"
-                )));
-            }
-            Ok(out.stdout)
+        "xz" => {
+            let mut dec = liblzma::read::XzDecoder::new(raw);
+            let mut out = Vec::new();
+            dec.read_to_end(&mut out)?;
+            Ok(out)
+        }
+        "zstd" => {
+            let mut dec = zstd::Decoder::new(raw).map_err(|e| {
+                Error::Command(format!("could not decompress zstd RPM payload: {e}"))
+            })?;
+            let mut out = Vec::new();
+            dec.read_to_end(&mut out)?;
+            Ok(out)
         }
         other => Err(Error::Unsupported(format!(
             "unsupported RPM payload compressor: {other}"
@@ -326,11 +319,14 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
     let (cmd, args): (&str, Vec<&str>) = if os_release.contains("fedora")
         || os_release.contains("rhel")
     {
-        ("pkexec", vec!["dnf", "install", "-y", s])
+        (super::escalate(), vec!["dnf", "install", "-y", s])
     } else if os_release.contains("arch") {
-        ("pkexec", vec!["pacman", "-U", "--noconfirm", s])
+        (super::escalate(), vec!["pacman", "-U", "--noconfirm", s])
     } else if os_release.contains("suse") || os_release.contains("opensuse") {
-        ("pkexec", vec!["zypper", "--non-interactive", "install", s])
+        (
+            super::escalate(),
+            vec!["zypper", "--non-interactive", "install", s],
+        )
     } else {
         return Err(Error::Refused(
             "no supported system package manager detected for --system install of an rpm".into(),

@@ -145,12 +145,47 @@ pub fn resolve_gameid(title: &str) -> String {
         }
     }
 
+    // Persistent cache: a title only needs one network lookup, ever.
+    let mut disk = load_gameid_cache();
+    if let Some(id) = disk.get(&key) {
+        if let Ok(mut cache) = gameid_cache().lock() {
+            cache.insert(key, id.clone());
+        }
+        return id.clone();
+    }
+
     let resolved = query_umu_database(title).unwrap_or_else(|| "umu-default".into());
 
     if let Ok(mut cache) = gameid_cache().lock() {
-        cache.insert(key, resolved.clone());
+        cache.insert(key.clone(), resolved.clone());
+    }
+    // Only persist real matches; don't cache the offline fallback.
+    if resolved != "umu-default" {
+        disk.insert(key, resolved.clone());
+        save_gameid_cache(&disk);
     }
     resolved
+}
+
+fn gameid_file() -> PathBuf {
+    umu_home().join("gameids.json")
+}
+
+fn load_gameid_cache() -> HashMap<String, String> {
+    std::fs::read_to_string(gameid_file())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_gameid_cache(map: &HashMap<String, String>) {
+    let path = gameid_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(path, text);
+    }
 }
 
 /// Query https://umu.openwinecomponents.org/umu_api.php for a game title.
@@ -161,14 +196,15 @@ fn query_umu_database(title: &str) -> Option<String> {
         "https://umu.openwinecomponents.org/umu_api.php?title={}",
         urlencode(title)
     );
-    let out = std::process::Command::new("curl")
-        .args(["-sL", "--max-time", "10", &url])
-        .output()
+    // Use the in-process HTTP client (ureq) rather than shelling out to
+    // curl, so this works on minimal systems without curl installed.
+    let mut res = ureq::get(&url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .call()
         .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = res.body_mut().read_to_string().ok()?;
     // Look for "umu_id":"umu-12345" in the JSON.
     for line in text.lines() {
         if let Some(idx) = line.find("\"umu_id\"") {

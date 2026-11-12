@@ -23,7 +23,8 @@ enum Cmd {
     /// Install a downloaded app file.
     Install {
         file: PathBuf,
-        /// Skip confirmations (scripts still ask unless run non-interactively... they ask anyway).
+        /// Skip the plan preview and confirmation prompts (installer scripts
+        /// still run sandboxed; this only skips the interactive question).
         #[arg(long)]
         yes: bool,
         /// Keep the original downloaded file (AppImages are moved by default).
@@ -43,7 +44,7 @@ enum Cmd {
         #[arg(long)]
         purge: bool,
     },
-    /// Check installed apps for updates (the GUI manager can also auto-check on launch).
+    /// Check installed apps for updates (on demand only).
     Update {
         /// Update a single app by name.
         name: Option<String>,
@@ -86,7 +87,6 @@ enum Cmd {
         #[arg(value_parser = ["wine", "proton"])]
         runner: String,
     },
-    /// Register dropin with the desktop: double-click handling plus
     /// Launch an installed app.
     Launch {
         /// Name of the app to launch.
@@ -372,7 +372,7 @@ fn run() -> dropin_core::Result<()> {
                 outcome.main_exe.display()
             );
             if outcome.is_windows {
-                println!("Windows game: will run via Wine/Proton.");
+                println!("Windows executable: will run via Wine/Proton.");
             }
             Ok(())
         }

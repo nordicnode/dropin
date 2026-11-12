@@ -130,12 +130,9 @@ pub fn detect(path: &Path) -> Result<Detection> {
     if compressed {
         return Ok(mk(path, Format::Tarball, true));
     }
-    // zip: PK\x03\x04 (flatpak bundles are ostree, not zip — handled by extension)
-    if head.len() >= 4
-        && head[0] == b'P'
-        && head[1] == b'K'
-        && (extension == "zip" || file_name.ends_with(".zip"))
-    {
+    // zip: PK\x03\x04. Magic first: a zip renamed to .bin/.txt is still a
+    // zip. The archive handler sniffs the contents and refuses data archives.
+    if head.len() >= 4 && head[0] == b'P' && head[1] == b'K' && head[2] == 0x03 && head[3] == 0x04 {
         return Ok(mk(path, Format::Zip, true));
     }
     // shell script shebang
@@ -227,6 +224,14 @@ mod tests {
         let d = detect(&p).unwrap();
         assert_eq!(d.format, Format::Tarball);
         assert_eq!(d.name_hint, "app");
+    }
+
+    #[test]
+    fn detects_zip_by_magic_even_when_renamed() {
+        let p = fixture("archive.bin", b"PK\x03\x04rest");
+        let d = detect(&p).unwrap();
+        assert_eq!(d.format, Format::Zip);
+        assert!(d.by_magic);
     }
 
     #[test]

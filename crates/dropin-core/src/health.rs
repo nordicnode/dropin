@@ -84,14 +84,11 @@ fn check_fuse(installs: &[Install]) -> Vec<HealthIssue> {
 
 /// Menu entries whose Exec binary doesn't exist. Catches the old dropin bug
 /// that wrote `<AppImage>/AppRun` (joining AppRun onto the image file path
-/// instead of using the image itself): the fix is to point Exec at the
-/// AppImage, which reinstalling now does correctly.
+/// instead of using the image itself), plus any install whose binary was
+/// deleted or moved by hand.
 fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
     for inst in installs {
-        if inst.format != "AppImage" {
-            continue;
-        }
         // Menu entries are written as dropin-<slug>.desktop.
         let desktop = dirs
             .desktop_entries
@@ -105,6 +102,11 @@ fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> 
             .find_map(|l| l.strip_prefix("Exec="))
             .map(str::trim)
             .unwrap_or("");
+        // `env VAR=... command` entries (Wine/Proton) are resolved by the
+        // runner, not by us; skip them rather than flagging `env` itself.
+        if exec.starts_with("env ") {
+            continue;
+        }
         let bin = exec.split_whitespace().next().unwrap_or("");
         if bin.is_empty() || Path::new(bin).exists() {
             continue;
@@ -445,6 +447,25 @@ mod tests {
         std::fs::write(&live_file, b"x").unwrap();
         let live = install("live", vec![live_file.display().to_string()]);
         assert!(check_orphaned(&[live]).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn flags_broken_exec_for_non_appimage() {
+        let d = tmpdir("broken-exec");
+        let dirs = test_dirs(&d);
+        std::fs::create_dir_all(&dirs.desktop_entries).unwrap();
+        let desktop = dirs.desktop_entries.join("dropin-demo.desktop");
+        std::fs::write(
+            &desktop,
+            "[Desktop Entry]\nName=Demo\nExec=/nonexistent/demo\n",
+        )
+        .unwrap();
+        let mut inst = install("demo", vec![desktop.display().to_string()]);
+        inst.format = "tar.gz archive".into();
+        let issues = check_broken_exec(&dirs, &[inst]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, HealthKind::BrokenExec);
         let _ = std::fs::remove_dir_all(&d);
     }
 
