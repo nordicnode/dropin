@@ -88,6 +88,17 @@ mod tests {
     }
 
     #[test]
+    fn real_pe_without_icon_returns_none() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello.exe");
+        if !fixture.exists() {
+            return;
+        }
+        // A valid PE with no resource section must not panic.
+        assert!(extract_icon_png(&fixture).is_none());
+    }
+
+    #[test]
     fn rejects_empty() {
         let tmp = std::env::temp_dir().join("dropin-test-empty.exe");
         std::fs::write(&tmp, b"").unwrap();

@@ -65,7 +65,8 @@ All notable changes to dropin are documented here. The format follows
   sandbox actually works, not just whether bwrap is installed.
 - Added end-to-end Wine and Proton tests using mock `wine`/`umu-run`
   binaries: install, launch, `set-runner`, and remove are now exercised
-  without needing real Wine or a GPU.
+  without needing real Wine or a GPU. A real 1 KiB PE fixture also covers
+  magic-byte detection, PE parsing, and the Wine install path.
 - Added tests for Wine executable selection, runner choice, the umu GAMEID
   disk cache, HTTP body caps, and the process timeout helper.
 - zsync control files now have a hard block-count cap (4M) and block-size

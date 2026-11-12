@@ -627,6 +627,54 @@ mod tests {
     }
 
     #[test]
+    fn installs_a_real_pe_with_mock_wine() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello.exe");
+        if !fixture.exists() {
+            return;
+        }
+        let d = crate::unique_temp_dir("dropin-real-pe");
+        let home = d.join("home");
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        write_mock(
+            &bin,
+            "wine",
+            "#!/bin/sh\n\
+             if [ \"$1\" = wineboot ]; then\n\
+               mkdir -p \"$WINEPREFIX/drive_c/Program Files/Hello\"\n\
+               exit 0\n\
+             fi\n\
+             mkdir -p \"$WINEPREFIX/drive_c/Program Files/Hello\"\n\
+             cp \"$1\" \"$WINEPREFIX/drive_c/Program Files/Hello/hello.exe\"\n\
+             exit 0\n",
+        );
+
+        crate::test_env::with_home_and_path(&home, &bin, || {
+            // The real PE is detected by magic, not just extension.
+            let det = crate::detect::detect(&fixture).unwrap();
+            assert_eq!(det.format, crate::detect::Format::WindowsExe);
+
+            let opts = InstallOptions {
+                yes: true,
+                runner: Some(super::super::proton::Runner::Wine),
+                ..Default::default()
+            };
+            let outcome = crate::install::install(&fixture, &opts).unwrap();
+            assert_eq!(outcome.name, "hello");
+            let prefix = prefix_for("hello");
+            assert!(prefix
+                .join("drive_c/Program Files/Hello/hello.exe")
+                .exists());
+            let desktop = home.join(".local/share/applications/dropin-hello.desktop");
+            assert!(desktop.exists());
+            crate::install::remove("hello", false).unwrap();
+            assert!(!prefix.exists());
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn pick_runner_auto_detects_games() {
         let opts = InstallOptions::default();
         assert_eq!(
