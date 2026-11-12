@@ -1,5 +1,9 @@
 # dropin v0.2.1 — launch kit
 
+> Historical document. Release binaries are now built by
+> `.github/workflows/release.yml` and attached to GitHub Releases; they are
+> no longer committed to the repository.
+
 Status (verified 2026-10-11): **v0.2.1 is rolled and live.** Tag v0.2.1 pushed,
 CLI-only tarball published at
 https://github.com/nordicnode/dropin/releases/tag/v0.2.1 (contains only
