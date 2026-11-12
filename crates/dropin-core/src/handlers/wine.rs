@@ -128,14 +128,14 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         std::fs::create_dir_all(&prefix)?;
         // Initialize the prefix for Wine; umu/Proton creates it on demand.
         if runner == super::proton::Runner::Wine {
-            let status = std::process::Command::new(wine_bin())
-                .env("WINEPREFIX", &prefix)
+            let mut init = std::process::Command::new(wine_bin());
+            init.env("WINEPREFIX", &prefix)
                 .arg("wineboot")
                 .arg("--init")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
+                .stderr(std::process::Stdio::null());
+            let status = super::run_with_timeout(&mut init, std::time::Duration::from_secs(5 * 60))
                 .map_err(|e| Error::Command(format!("couldn't initialize Wine prefix: {e}")))?;
             if !status.success() {
                 let _ = std::fs::remove_dir_all(&prefix);
@@ -187,8 +187,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             } else {
                 cmd.arg(&dest);
             }
-            let status = cmd
-                .status()
+            let status = super::run_with_timeout(&mut cmd, super::install_timeout())
                 .map_err(|e| Error::Command(format!("Wine failed: {e}")))?;
             if !status.success() {
                 eprintln!("note: the installer exited with a non-zero status; continuing anyway");
@@ -404,5 +403,71 @@ pub fn current_runner(slug: &str) -> Option<super::proton::Runner> {
         Some("proton") => Some(super::proton::Runner::Proton),
         Some("wine") => Some(super::proton::Runner::Wine),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_main_exe_prefers_program_files_and_skips_helpers() {
+        let d = crate::unique_temp_dir("dropin-wine-exe");
+        let drive = d.join("drive_c");
+        std::fs::create_dir_all(drive.join("Program Files/Game")).unwrap();
+        std::fs::create_dir_all(drive.join("windows")).unwrap();
+        std::fs::write(drive.join("Program Files/Game/game.exe"), b"MZ").unwrap();
+        std::fs::write(drive.join("Program Files/Game/uninstall.exe"), b"MZ").unwrap();
+        std::fs::write(drive.join("Program Files/Game/setup.exe"), b"MZ").unwrap();
+        std::fs::write(drive.join("windows/helper.exe"), b"MZ").unwrap();
+        let found = find_main_exe(&drive).unwrap();
+        assert_eq!(found, drive.join("Program Files/Game/game.exe"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn find_main_exe_returns_none_without_exes() {
+        let d = crate::unique_temp_dir("dropin-wine-noexe");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("readme.txt"), b"hi").unwrap();
+        assert!(find_main_exe(&d).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn pick_runner_respects_explicit_choice() {
+        let opts = InstallOptions {
+            runner: Some(super::super::proton::Runner::Proton),
+            ..Default::default()
+        };
+        assert_eq!(
+            pick_runner(Path::new("/tmp/notepad.exe"), "notepad", &opts),
+            super::super::proton::Runner::Proton
+        );
+        let opts = InstallOptions {
+            runner: Some(super::super::proton::Runner::Wine),
+            ..Default::default()
+        };
+        assert_eq!(
+            pick_runner(Path::new("/tmp/setup_game.exe"), "setup_game", &opts),
+            super::super::proton::Runner::Wine
+        );
+    }
+
+    #[test]
+    fn pick_runner_auto_detects_games() {
+        let opts = InstallOptions::default();
+        assert_eq!(
+            pick_runner(
+                Path::new("/tmp/setup_witcher3.exe"),
+                "setup_witcher3",
+                &opts
+            ),
+            super::super::proton::Runner::Proton
+        );
+        assert_eq!(
+            pick_runner(Path::new("/tmp/notepad.exe"), "notepad", &opts),
+            super::super::proton::Runner::Wine
+        );
     }
 }

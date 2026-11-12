@@ -40,6 +40,19 @@ All notable changes to dropin are documented here. The format follows
 - **`doctor`** checks `bwrap`/`umu-run` and portable Wine, and broken-menu
   detection covers every tracked desktop entry, not just AppImages.
 
+### Hardening
+
+- All HTTP requests now have connect/response/body timeouts, so a stalled
+  server can't hang `dropin update` forever.
+- Wine installers run with a wall-clock timeout (default 2 hours, override
+  with `DROPIN_INSTALL_TIMEOUT`); a hung installer is killed and its
+  half-created prefix is removed.
+- The script sandbox probes bubblewrap before running, so a system with
+  unprivileged user namespaces disabled gets a clear explanation instead of
+  a cryptic mid-install failure.
+- Added tests for Wine executable selection, runner choice, the umu GAMEID
+  disk cache, HTTP body caps, and the process timeout helper.
+
 ### Changed
 
 - External `curl`, `tar`, `unxz`, and `unzstd` calls were replaced with the

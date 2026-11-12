@@ -86,7 +86,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // signature that exists but can't be parsed is reported, not ignored.
     let signing_key = match crate::signatures::check(src) {
         crate::signatures::SigCheck::Found { fingerprint } => {
-            println!("dropin: signature found, key {fingerprint} pinned (trust on first use)");
+            println!(
+                "dropin: signature found, issuer key {fingerprint} pinned (continuity only; the signature itself is not cryptographically verified)"
+            );
             Some(fingerprint)
         }
         crate::signatures::SigCheck::Invalid(why) => {

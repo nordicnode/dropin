@@ -114,6 +114,45 @@ pub fn ensure_not_installed(slug: &str) -> Result<()> {
     Ok(())
 }
 
+/// How long a vendor installer may run before dropin kills it. Override with
+/// `DROPIN_INSTALL_TIMEOUT` (seconds). Default: 2 hours.
+pub fn install_timeout() -> std::time::Duration {
+    std::env::var("DROPIN_INSTALL_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(2 * 60 * 60))
+}
+
+/// Run a command with a wall-clock timeout, killing it if it overruns.
+/// Vendor installers can hang forever; a hung install must not block dropin.
+pub fn run_with_timeout(
+    cmd: &mut std::process::Command,
+    timeout: std::time::Duration,
+) -> Result<std::process::ExitStatus> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Command(format!("failed to start: {e}")))?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(Error::Command(format!(
+                        "timed out after {}s",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => return Err(Error::Command(format!("waiting for process: {e}"))),
+        }
+    }
+}
+
 /// The privilege-escalation command to use: pkexec when available (graphical
 /// prompt), otherwise sudo.
 pub fn escalate() -> &'static str {
@@ -161,4 +200,26 @@ pub fn remove_system_package(name: &str) -> Result<String> {
         )));
     }
     Ok(format!("Removed system package '{name}' via {pm}."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_with_timeout_returns_status() {
+        let mut cmd = std::process::Command::new("true");
+        let status = run_with_timeout(&mut cmd, std::time::Duration::from_secs(5)).unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_hung_process() {
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("10");
+        let start = std::time::Instant::now();
+        let err = run_with_timeout(&mut cmd, std::time::Duration::from_millis(200)).unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
 }

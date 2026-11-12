@@ -477,6 +477,23 @@ mod tests {
     }
 
     #[test]
+    fn gameid_disk_cache_avoids_network() {
+        let d = crate::unique_temp_dir("dropin-gameid");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let dir = umu_home();
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("gameids.json"),
+                r#"{"cache test game":"umu-99999"}"#,
+            )
+            .unwrap();
+            assert_eq!(resolve_gameid("Cache Test Game"), "umu-99999");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn urlencode_works() {
         assert_eq!(urlencode("The Witcher 3"), "The+Witcher+3");
     }

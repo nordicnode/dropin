@@ -75,6 +75,9 @@ pub fn latest_release_from(api_base: &str, repo: &str, data_dir: &Path) -> Resul
     let mut req = ureq::get(&url)
         .config()
         .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(60)))
         .build()
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/vnd.github+json");

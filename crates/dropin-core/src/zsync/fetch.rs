@@ -8,11 +8,25 @@ use std::io::Read;
 use std::path::Path;
 
 /// Result of a ranged GET: what the server actually sent.
+#[derive(Debug)]
 pub enum RangeBody {
     /// 206: exactly the requested bytes.
     Partial(Vec<u8>),
     /// 200: the server ignored the Range header and sent everything.
     Full(Vec<u8>),
+}
+
+/// Build a GET request with sane timeouts. Without these, a stalled server
+/// can hang `dropin update` forever.
+fn get(url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    ureq::get(url)
+        .config()
+        .http_status_as_error(false)
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(30)))
+        .timeout_recv_body(Some(std::time::Duration::from_secs(60)))
+        .build()
+        .header("User-Agent", super::USER_AGENT)
 }
 
 /// GET `url` with `Range: bytes=start-(start+len-1)`.
@@ -21,12 +35,8 @@ pub enum RangeBody {
 /// reported as [`RangeBody::Full`] so the caller can decide.
 pub fn get_range(url: &str, start: u64, len: u64) -> Result<RangeBody, String> {
     let end = start.saturating_add(len).saturating_sub(1);
-    let mut res = ureq::get(url)
-        .config()
-        .http_status_as_error(false)
-        .build()
+    let mut res = get(url)
         .header("Range", &format!("bytes={start}-{end}"))
-        .header("User-Agent", super::USER_AGENT)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
@@ -55,11 +65,7 @@ pub fn get_range(url: &str, start: u64, len: u64) -> Result<RangeBody, String> {
 /// The destination is created fresh; a failed download leaves no partial file.
 pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), String> {
     let tmp = path.with_extension("dropin-part");
-    let mut res = ureq::get(url)
-        .config()
-        .http_status_as_error(false)
-        .build()
-        .header("User-Agent", super::USER_AGENT)
+    let mut res = get(url)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
     if res.status().as_u16() != 200 {
@@ -92,11 +98,7 @@ pub fn download_to_file(url: &str, path: &Path, max_bytes: u64) -> Result<(), St
 
 /// GET the whole file, refusing anything over `max_bytes`.
 pub fn get_all(url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
-    let mut res = ureq::get(url)
-        .config()
-        .http_status_as_error(false)
-        .build()
-        .header("User-Agent", super::USER_AGENT)
+    let mut res = get(url)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
     if res.status() != 200 {
@@ -126,12 +128,8 @@ pub fn get_range_into(
     mut write: impl FnMut(&[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let end = start.saturating_add(len).saturating_sub(1);
-    let mut res = ureq::get(url)
-        .config()
-        .http_status_as_error(false)
-        .build()
+    let mut res = get(url)
         .header("Range", &format!("bytes={start}-{end}"))
-        .header("User-Agent", super::USER_AGENT)
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
     let ranged = match res.status().as_u16() {
@@ -170,4 +168,50 @@ pub fn get_range_into(
         return Err(format!("short read: {remaining} of {len} bytes missing"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serve one HTTP response on a random local port.
+    fn serve_once(response: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(&response);
+            }
+        });
+        format!("http://{addr}/file")
+    }
+
+    #[test]
+    fn get_range_rejects_oversized_body() {
+        let body = vec![0u8; 4 * 1024 * 1024];
+        let mut resp = b"HTTP/1.1 200 OK\r\nContent-Length: 4194304\r\n\r\n".to_vec();
+        resp.extend_from_slice(&body);
+        let url = serve_once(resp);
+        let err = get_range(&url, 0, 1024).unwrap_err();
+        assert!(err.contains("exceeded"), "{err}");
+    }
+
+    #[test]
+    fn download_to_file_enforces_max_bytes() {
+        let body = vec![0u8; 2048];
+        let mut resp = b"HTTP/1.1 200 OK\r\nContent-Length: 2048\r\n\r\n".to_vec();
+        resp.extend_from_slice(&body);
+        let url = serve_once(resp);
+        let dir = crate::unique_temp_dir("dropin-fetch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("out");
+        let err = download_to_file(&url, &dest, 1024).unwrap_err();
+        assert!(err.contains("exceeded"), "{err}");
+        assert!(!dest.exists(), "no partial file left behind");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

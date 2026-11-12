@@ -318,6 +318,36 @@ fn writable_roots() -> Vec<PathBuf> {
     roots
 }
 
+/// Check that bwrap can actually create a sandbox here.
+fn bwrap_probe() -> std::result::Result<(), String> {
+    let out = Command::new("bwrap")
+        .args([
+            "--ro-bind",
+            "/",
+            "/",
+            "--unshare-user",
+            "--unshare-pid",
+            "--die-with-parent",
+            "true",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("couldn't run bwrap: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        Err(err
+            .trim()
+            .lines()
+            .next()
+            .unwrap_or("bwrap failed")
+            .to_string())
+    }
+}
+
 /// Build the bubblewrap command for a vendor installer.
 fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
     if !crate::have("bwrap") {
@@ -326,6 +356,18 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
              Install it for your distro (e.g. `apt install bubblewrap`) and try again."
                 .into(),
         ));
+    }
+    // A bwrap binary can exist while user namespaces are disabled (common on
+    // hardened kernels). Probe once so the user gets a clear explanation
+    // instead of a cryptic failure mid-install.
+    if let Err(why) = bwrap_probe() {
+        return Err(Error::Refused(format!(
+            "bubblewrap is installed but can't create a sandbox on this system.\n\
+             This usually means unprivileged user namespaces are disabled.\n\
+             Details: {why}\n\
+             Enable them (e.g. `sysctl kernel.unprivileged_userns_clone=1`) or install \
+             the installer manually if you trust it."
+        )));
     }
     let home = crate::home_dir();
     let home_s = home.to_string_lossy().to_string();
