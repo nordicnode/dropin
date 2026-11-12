@@ -1,6 +1,6 @@
 # dropin — design doc (working name)
 
-**Tagline:** Download it. Double-click it. Done.
+**Tagline:** Point it at a file. It's installed.
 
 ## Problem
 

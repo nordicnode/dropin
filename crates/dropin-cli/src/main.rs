@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[command(
     name = "dropin",
     version,
-    about = "Download it. Double-click it. Done."
+    about = "Point it at a file. It's installed."
 )]
 struct Cli {
     #[command(subcommand)]
