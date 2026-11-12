@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dropin — the universal Linux installer</title>
+<meta name="description" content="dropin installs AppImages, .debs, .rpms, tarballs, Flatpaks, installer scripts and Windows games on Linux. One command, no root, and everything tracked so uninstalls are actually clean.">
+<style>
+  :root { --text: #1a1a1a; --muted: #5c5c5c; --line: #e2e2e2; --accent: #0b5fff; --code-bg: #f4f4f4; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text); line-height: 1.6; font-size: 17px; }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 32px; margin-bottom: 32px; }
+  header img { width: 180px; height: auto; display: block; margin-bottom: 16px; }
+  h1 { font-size: 2.4em; line-height: 1.1; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .tagline { font-size: 1.25em; margin: 0 0 16px; }
+  .lede { color: var(--muted); margin: 0 0 20px; max-width: 60ch; }
+  .links a { margin-right: 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h2 { font-size: 1.35em; margin: 40px 0 12px; letter-spacing: -0.01em; }
+  p { margin: 0 0 16px; }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 2px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.86em; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 0.95em; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  figure { margin: 0 0 16px; }
+  figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; }
+  figcaption { color: var(--muted); font-size: 0.85em; margin-top: 8px; }
+  footer { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 20px; color: var(--muted); font-size: 0.9em; }
+  footer p { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img src="assets/logo-v3.webp" alt="dropin logo" width="180">
+  <h1>dropin</h1>
+  <p class="tagline">Point it at a file. It&rsquo;s installed.</p>
+  <p class="lede">The universal Linux installer for all the weird files the internet hands you. AppImages, <code>.deb</code>s, <code>.rpm</code>s, tarballs, Flatpaks, installer scripts, Windows games. One command, no root, and everything tracked so uninstalls are actually clean.</p>
+  <p class="links">
+    <a href="https://github.com/nordicnode/dropin">Source on GitHub</a>
+    <a href="https://github.com/nordicnode/dropin/releases">Releases</a>
+    <a href="https://github.com/nordicnode/dropin/issues">Issues</a>
+  </p>
+</header>
+
+<h2>Install</h2>
+<p>Latest release: <a href="https://github.com/nordicnode/dropin/releases/latest">v0.2.1</a>. Prebuilt tarballs are attached to each GitHub release. Each tarball contains the <code>dropin</code> binary and a rootless <code>install.sh</code>.</p>
+<p>Or build from source:</p>
+<pre><code>cargo install --git https://github.com/nordicnode/dropin dropin-cli</code></pre>
+<p>dropin is a command-line tool written in Rust, MIT licensed. It needs no root and no account.</p>
+
+<h2>What it handles</h2>
+<table>
+  <tr><th>You downloaded</th><th>What dropin does (all in user scope, no root)</th></tr>
+  <tr><td><code>.AppImage</code></td><td>Moves to <code>~/Applications</code>, makes it executable, pulls out the real icon and menu entry</td></tr>
+  <tr><td><code>.deb</code></td><td>Extracts the payload to <code>~/.local/opt/&lt;pkg&gt;</code> with a pure-Rust reader (no <code>dpkg</code> needed), adopts the bundled <code>.desktop</code> files with paths fixed up, links <code>usr/bin/*</code> into <code>~/.local/bin</code></td></tr>
+  <tr><td><code>.rpm</code></td><td>Same treatment through a pure-Rust RPM/cpio reader. Works on Debian too, no <code>rpm2cpio</code> required</td></tr>
+  <tr><td><code>.tar.gz</code> / <code>.tar.xz</code> / <code>.zip</code></td><td>Looks at what&rsquo;s inside. Real app? Installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken &ldquo;install&rdquo;</td></tr>
+  <tr><td><code>.flatpakref</code> / <code>.flatpak</code></td><td>Hands it to <code>flatpak install --user</code></td></tr>
+  <tr><td><code>.sh</code> / <code>.run</code> / <code>.bin</code></td><td>Tells you it&rsquo;s an executable vendor script and won&rsquo;t run it until you explicitly say so</td></tr>
+  <tr><td><code>.exe</code> / <code>.msi</code></td><td>Auto-detects games vs apps. Games run with GE-Proton via umu-launcher. Apps run with Wine. Isolated prefix per app, tracked for clean removal</td></tr>
+</table>
+<p>Detection goes by magic bytes, not file extensions. Rename a <code>.deb</code> to <code>.txt</code> and dropin still knows what it&rsquo;s looking at.</p>
+
+<figure>
+  <img src="assets/screenshot-terminal-install.png" alt="dropin terminal workflow: info, install, list" width="900" height="460">
+  <figcaption>Dry run, verified install, and the ledger keeping score.</figcaption>
+</figure>
+
+<h2>Uninstalls that actually undo</h2>
+<p>Everything dropin creates &mdash; files, symlinks, menu entries, icons &mdash; is written to a SQLite database at <code>~/.local/share/dropin/ledger.db</code>. Removing an app walks that list backwards and deletes exactly what was installed. Nothing orphaned, nothing guessed at.</p>
+<pre><code>$ dropin install coolapp-2.4-linux-x86_64.tar.gz
+Installed 'coolapp'.
+Remove anytime with: dropin remove coolapp
+
+$ dropin list
+coolapp — tar.gz archive</code></pre>
+
+<h2>AppImage updates without fear</h2>
+<p>AppImages live in <code>~/Applications/&lt;app&gt;/&lt;version&gt;/</code>, with an <code>active</code> symlink pointing at the current one. Menu entries point at <code>active</code>, so switching versions never touches your launchers. Updates use a native zsync delta where a channel exists, are SHA-1 verified, and <code>dropin rollback &lt;name&gt;</code> flips <code>active</code> back to the previous version instantly. Only the last two generations are kept.</p>
+<p>For AppImages from GitHub releases with no zsync channel, <code>dropin track &lt;name&gt; --github owner/repo</code> follows the repo instead. If a release ships a detached signature, dropin pins the signing key on first install and refuses updates whose signature is missing, unreadable, or from a different key.</p>
+
+<h2>Installer scripts: audited, sandboxed, reversible</h2>
+<ul>
+  <li><strong>Static audit first.</strong> Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo.</li>
+  <li><strong>Sandboxed execution.</strong> Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn&rsquo;t installed, dropin refuses rather than running unsandboxed.</li>
+  <li><strong>Full logging.</strong> Every byte of installer output is logged to <code>~/.local/share/dropin/script-logs/</code>.</li>
+  <li><strong>Complete undo.</strong> Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted.</li>
+</ul>
+
+<h2>Usage</h2>
+<pre><code>dropin list                 # everything dropin installed
+dropin launch &lt;name&gt;        # run an installed app
+dropin update [name|--all]  # check for updates, on demand only
+dropin rollback &lt;name&gt;      # restore an AppImage to its previous version
+dropin track &lt;name&gt; --github owner/repo
+dropin remove &lt;name&gt;        # clean removal, reversed from the ledger
+dropin remove --purge &lt;name&gt; # also move leftover config/cache/data to the trash
+dropin doctor               # health checks: broken menus, orphans, missing tools
+dropin info &lt;file&gt;          # dry run showing exactly what would happen
+dropin install &lt;file&gt;       # install (shows the plan first; scripts need confirmation)
+dropin install --allow-net &lt;file&gt;
+dropin install --system &lt;file&gt;   # real system install via the distro package manager
+dropin set-runner &lt;name&gt; wine|proton
+dropin set-env &lt;name&gt; &lt;key&gt; &lt;value&gt;
+dropin export &lt;file&gt;        # back up the app list to JSON
+dropin import &lt;file&gt;        # re-install apps whose source files still exist
+dropin setup-wine           # install Wine automatically for Windows apps
+dropin setup-proton         # install umu-launcher + GE-Proton for games
+dropin adopt &lt;dir&gt;          # add an already-installed game folder</code></pre>
+
+<h2>Principles</h2>
+<ul>
+  <li><strong>Your home directory is yours.</strong> Installs land in user scope and never ask for root unless you explicitly choose a system install.</li>
+  <li><strong>Show before doing.</strong> <code>dropin info</code> always lays out the plan first. Installer scripts need your explicit okay.</li>
+  <li><strong>Offline by default.</strong> No accounts, no telemetry, no background phoning home. Network access only happens for actions you start.</li>
+  <li><strong>Honest about limits.</strong> If dropin can&rsquo;t update something automatically, it says so instead of pretending.</li>
+</ul>
+
+<footer>
+  <p>dropin is open source under the MIT license. Source, issues and releases live at <a href="https://github.com/nordicnode/dropin">github.com/nordicnode/dropin</a>.</p>
+</footer>
+</main>
+</body>
+</html>
