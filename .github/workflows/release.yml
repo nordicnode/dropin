@@ -41,8 +41,11 @@ jobs:
           cp "target/${{ matrix.target }}/release/dropin" "$dir/"
           cp README.md LICENSE packaging/install.sh "$dir/"
           tar -czf "${dir}.tar.gz" "$dir"
+          sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dropin-*.tar.gz
+          files: |
+            dropin-*.tar.gz
+            dropin-*.tar.gz.sha256
           generate_release_notes: true
