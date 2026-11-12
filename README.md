@@ -87,7 +87,7 @@ For AppImages from GitHub releases with no zsync channel, `dropin track <name> -
 `.sh`, `.run`, and `.bin` files are vendor scripts that can do anything, so dropin treats them with care:
 
 - **Static audit first.** Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo. No jargon.
-- **Sandboxed execution.** Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn't installed, dropin refuses rather than running unsandboxed.
+- **Sandboxed execution.** Scripts run under bubblewrap: no network unless you allow it, the system read-only, and only your install folders writable. Writes are staged through an overlayfs layer and applied only after the run, so the installer can't directly modify unrelated files; dropin also warns about startup entries, overwritten commands, and other apps' menu entries. Your SSH and GPG keys are hidden. If bubblewrap isn't installed, dropin refuses rather than running unsandboxed.
 - **Full logging.** Every byte of installer output is logged to `~/.local/share/dropin/script-logs/`.
 - **Complete undo.** Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted, with a plain-language summary of what was undone.
 

@@ -42,6 +42,11 @@ All notable changes to dropin are documented here. The format follows
 
 ### Security
 
+- Installer-script writes are now staged through an **overlayfs upper layer**
+  and applied to the real folders only after the run. A malicious installer
+  can no longer directly modify unrelated configs during execution, and
+  dropin warns about startup entries, overwritten commands, and other apps'
+  menu entries. Falls back to direct binds when overlayfs is unavailable.
 - Detached signatures are now **cryptographically verified with gpg** when
   the signer's public key is in the user's keyring. A BAD signature refuses
   the install/update outright. When gpg or the key is unavailable, dropin

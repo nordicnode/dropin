@@ -348,8 +348,194 @@ pub(crate) fn bwrap_probe() -> std::result::Result<(), String> {
     }
 }
 
+/// One writable root staged through an overlayfs upper layer.
+struct OverlayRoot {
+    real: PathBuf,
+    upper: PathBuf,
+    work: PathBuf,
+}
+
+/// Is overlayfs usable in an unprivileged bwrap sandbox here?
+fn overlay_supported() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        let d = crate::unique_temp_dir("dropin-overlay-probe");
+        let lower = d.join("lower");
+        let upper = d.join("upper");
+        let work = d.join("work");
+        if std::fs::create_dir_all(&lower).is_err()
+            || std::fs::create_dir_all(&upper).is_err()
+            || std::fs::create_dir_all(&work).is_err()
+        {
+            let _ = std::fs::remove_dir_all(&d);
+            return false;
+        }
+        let ok = Command::new("bwrap")
+            .args(["--ro-bind", "/", "/", "--overlay-src"])
+            .arg(&lower)
+            .arg("--overlay")
+            .arg(&upper)
+            .arg(&work)
+            .arg(&lower)
+            .args(["--", "true"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_dir_all(&d);
+        ok
+    })
+}
+
+/// Create overlay upper/work dirs for each writable root. The staging dirs
+/// live under /tmp, outside every writable root, so the overlay isn't
+/// recursively nested inside its own lower layer.
+fn make_overlays(slug: &str) -> Result<Vec<OverlayRoot>> {
+    let base = crate::unique_temp_dir(&format!("dropin-overlay-{slug}"));
+    let mut out = Vec::new();
+    for (i, real) in writable_roots().into_iter().enumerate() {
+        let upper = base.join(format!("{i}/upper"));
+        let work = base.join(format!("{i}/work"));
+        std::fs::create_dir_all(&upper)?;
+        std::fs::create_dir_all(&work)?;
+        out.push(OverlayRoot { real, upper, work });
+    }
+    Ok(out)
+}
+
+/// Copy the overlay upper layers into the real roots.
+///
+/// Overlayfs represents a deletion as a character device with rdev 0/0
+/// (a "whiteout"). We remove the corresponding real path for those, and
+/// copy new/modified files, symlinks, and directories.
+fn apply_overlays(overlays: &[OverlayRoot]) -> Result<()> {
+    for ov in overlays {
+        if !ov.upper.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(&ov.upper)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let rel = match entry.path().strip_prefix(&ov.upper) {
+                Ok(r) if !r.as_os_str().is_empty() => r,
+                _ => continue,
+            };
+            let dest = ov.real.join(rel);
+            let ft = entry.file_type();
+            if ft.is_dir() {
+                std::fs::create_dir_all(&dest)?;
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if ft.is_symlink() {
+                let target = std::fs::read_link(entry.path())?;
+                let _ = std::fs::remove_file(&dest);
+                std::os::unix::fs::symlink(target, &dest)?;
+                continue;
+            }
+            if ft.is_file() {
+                // Write to a temp file and rename over the destination. A
+                // direct copy would edit the existing inode in place, which
+                // also changes the hardlink backup and defeats undo.
+                let name = dest
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file".into());
+                let tmp =
+                    dest.with_file_name(format!(".{name}.dropin-apply-{}", std::process::id()));
+                std::fs::copy(entry.path(), &tmp)?;
+                if let Ok(meta) = entry.metadata() {
+                    let _ = std::fs::set_permissions(&tmp, meta.permissions());
+                }
+                std::fs::rename(&tmp, &dest)?;
+                continue;
+            }
+            // Whiteout: a char device with rdev 0/0 means "deleted".
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileTypeExt;
+                if ft.is_char_device() {
+                    if let Ok(meta) = entry.metadata() {
+                        use std::os::unix::fs::MetadataExt;
+                        if meta.rdev() == 0 {
+                            let _ = crate::ledger::remove_path(&dest);
+                            continue;
+                        }
+                    }
+                }
+            }
+            eprintln!(
+                "warning: skipping unsupported overlay entry {}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Warn about changes that reach outside the app's own name: startup
+/// entries, overwritten commands, and other apps' menu entries. This is a
+/// heuristic, not a block; the undo record still covers everything.
+fn warn_suspicious(overlays: &[OverlayRoot], slug: &str) {
+    let mut warnings = Vec::new();
+    for ov in overlays {
+        for entry in walkdir::WalkDir::new(&ov.upper)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let rel = match entry.path().strip_prefix(&ov.upper) {
+                Ok(r) if !r.as_os_str().is_empty() => r,
+                _ => continue,
+            };
+            let dest = ov.real.join(rel);
+            let s = dest.to_string_lossy();
+            if s.contains("/.config/autostart/") || s.contains("/.config/systemd/user/") {
+                warnings.push(format!("adds a startup entry: {}", dest.display()));
+            } else if s.contains("/.local/bin/") && dest.exists() {
+                warnings.push(format!(
+                    "overwrites an existing command: {}",
+                    dest.display()
+                ));
+            } else if s.contains("/.local/share/applications/") && !s.contains(slug) {
+                warnings.push(format!(
+                    "adds or changes another app's menu entry: {}",
+                    dest.display()
+                ));
+            }
+        }
+    }
+    if !warnings.is_empty() {
+        eprintln!("note: the installer touched files outside its own name:");
+        for w in warnings.iter().take(10) {
+            eprintln!("  - {w}");
+        }
+        if warnings.len() > 10 {
+            eprintln!("  ... and {} more", warnings.len() - 10);
+        }
+    }
+}
+
+/// Remove the overlay staging dirs.
+fn cleanup_overlays(overlays: &[OverlayRoot]) {
+    if let Some(first) = overlays.first() {
+        if let Some(base) = first.upper.parent().and_then(|p| p.parent()) {
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+}
+
 /// Build the bubblewrap command for a vendor installer.
-fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
+///
+/// Writable roots are staged through overlayfs when the kernel supports it:
+/// the installer sees the real files but writes go to a temporary upper
+/// layer, which is applied to the real roots only after the run. This keeps
+/// a malicious installer from directly modifying unrelated configs.
+fn sandbox_command(src: &Path, allow_net: bool, slug: &str) -> Result<(Command, Vec<OverlayRoot>)> {
     if !crate::have("bwrap") {
         return Err(Error::Refused(
             "bwrap (bubblewrap) is required to run installer scripts safely, but it isn't installed.\n\
@@ -419,11 +605,30 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
     // HOME or installer that happens to live under /tmp) must come after
     // this, because later mounts win.
     cmd.args(["--tmpfs", "/tmp", "--proc", "/proc", "--dev", "/dev"]);
-    // HOME read-only, then punch writable holes for the install folders.
+    // HOME read-only, then stage the install folders.
     cmd.args(["--ro-bind", &home_s, &home_s]);
-    for root in writable_roots() {
-        let s = root.to_string_lossy().to_string();
-        cmd.args(["--bind", &s, &s]);
+    let mut overlays = Vec::new();
+    if overlay_supported() {
+        overlays = make_overlays(slug)?;
+        for ov in &overlays {
+            cmd.args(["--overlay-src", &ov.real.to_string_lossy()]);
+            cmd.args([
+                "--overlay",
+                &ov.upper.to_string_lossy(),
+                &ov.work.to_string_lossy(),
+                &ov.real.to_string_lossy(),
+            ]);
+        }
+    } else {
+        // Fallback: direct writable binds (the old behavior). The undo
+        // snapshot still records every change.
+        eprintln!(
+            "note: overlayfs isn't available here; installer writes go directly to your folders"
+        );
+        for root in writable_roots() {
+            let s = root.to_string_lossy().to_string();
+            cmd.args(["--bind", &s, &s]);
+        }
     }
     // Hide secrets even from reading. (After the binds: later mounts win.)
     // Only mount over paths that actually exist: bwrap cannot create a
@@ -449,7 +654,7 @@ fn sandbox_command(src: &Path, allow_net: bool) -> Result<Command> {
     // installer writing to $HOME lands in the ephemeral sandbox root and its
     // files vanish when the sandbox exits.
     cmd.env("HOME", &home_s);
-    Ok(cmd)
+    Ok((cmd, overlays))
 }
 
 // ---------------------------------------------------------------------------
@@ -995,7 +1200,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             }
         );
     }
-    let mut cmd = sandbox_command(src, allow_net)?;
+    let (mut cmd, overlays) = sandbox_command(src, allow_net, &slug)?;
     // Live progress: show the latest line in place on interactive terminals.
     let interactive = !opts.quiet && io::stdin().is_terminal();
     let last_line = Arc::new(Mutex::new(String::new()));
@@ -1015,6 +1220,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let (status, log_path) = match run_and_log(&mut cmd, &slug, on_line) {
         Ok(r) => r,
         Err(e) => {
+            cleanup_overlays(&overlays);
             std::fs::remove_dir_all(&backup_dir).ok();
             return Err(e);
         }
@@ -1023,6 +1229,18 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         eprintln!();
     }
     let success = status.success();
+
+    // Apply the overlay upper layers to the real folders, then diff. This
+    // is what makes the changes visible to the undo record.
+    warn_suspicious(&overlays, &slug);
+    if let Err(e) = apply_overlays(&overlays) {
+        cleanup_overlays(&overlays);
+        std::fs::remove_dir_all(&backup_dir).ok();
+        return Err(Error::Command(format!(
+            "couldn't apply the installer's changes: {e}"
+        )));
+    }
+    cleanup_overlays(&overlays);
 
     // Diff, report, undo record.
     let after = snapshot_writable();
@@ -1159,6 +1377,39 @@ mod tests {
             plan.steps.iter().any(|s| s.contains("[DANGER]")),
             "dry run should surface the audit: {:?}",
             plan.steps
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn apply_overlays_copies_files_dirs_and_symlinks() {
+        let d = crate::unique_temp_dir("dropin-overlay-apply");
+        let real = d.join("real");
+        let upper = d.join("upper");
+        let work = d.join("work");
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        std::fs::create_dir_all(upper.join("sub")).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(real.join("sub/existing"), b"old").unwrap();
+        std::fs::write(upper.join("sub/existing"), b"new").unwrap();
+        std::fs::write(upper.join("sub/added"), b"added").unwrap();
+        std::fs::create_dir_all(upper.join("newdir")).unwrap();
+        std::fs::write(upper.join("newdir/file"), b"x").unwrap();
+        std::os::unix::fs::symlink("sub/added", upper.join("link")).unwrap();
+
+        let ov = OverlayRoot {
+            real: real.clone(),
+            upper,
+            work,
+        };
+        apply_overlays(&[ov]).unwrap();
+
+        assert_eq!(std::fs::read(real.join("sub/existing")).unwrap(), b"new");
+        assert_eq!(std::fs::read(real.join("sub/added")).unwrap(), b"added");
+        assert_eq!(std::fs::read(real.join("newdir/file")).unwrap(), b"x");
+        assert_eq!(
+            std::fs::read_link(real.join("link")).unwrap(),
+            std::path::PathBuf::from("sub/added")
         );
         let _ = std::fs::remove_dir_all(&d);
     }
