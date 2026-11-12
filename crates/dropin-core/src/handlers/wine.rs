@@ -454,6 +454,178 @@ mod tests {
         );
     }
 
+    fn write_mock(dir: &Path, name: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(name);
+        std::fs::write(&p, body).unwrap();
+        let mut perms = std::fs::metadata(&p).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&p, perms).unwrap();
+    }
+
+    #[test]
+    fn install_launch_remove_with_mock_wine() {
+        let d = crate::unique_temp_dir("dropin-wine-e2e");
+        let home = d.join("home");
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        write_mock(
+            &bin,
+            "wine",
+            "#!/bin/sh\n\
+             if [ \"$1\" = wineboot ]; then\n\
+               mkdir -p \"$WINEPREFIX/drive_c/Program Files/MockApp\"\n\
+               exit 0\n\
+             fi\n\
+             mkdir -p \"$WINEPREFIX/drive_c/Program Files/MockApp\"\n\
+             printf MZ > \"$WINEPREFIX/drive_c/Program Files/MockApp/mockapp.exe\"\n\
+             exit 0\n",
+        );
+        let exe = d.join("fakeapp.exe");
+        std::fs::write(&exe, b"MZ\x00\x00").unwrap();
+
+        crate::test_env::with_home_and_path(&home, &bin, || {
+            let opts = InstallOptions {
+                yes: true,
+                runner: Some(super::super::proton::Runner::Wine),
+                ..Default::default()
+            };
+            let outcome = crate::install::install(&exe, &opts).unwrap();
+            assert_eq!(outcome.name, "fakeapp");
+            let prefix = prefix_for("fakeapp");
+            assert!(prefix
+                .join("drive_c/Program Files/MockApp/mockapp.exe")
+                .exists());
+            let desktop = home.join(".local/share/applications/dropin-fakeapp.desktop");
+            assert!(desktop.exists(), "desktop entry created");
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(
+                text.contains("mockapp.exe"),
+                "launches the installed exe: {text}"
+            );
+
+            // The ledger knows about it.
+            let ledger = crate::ledger::Ledger::open().unwrap();
+            assert!(ledger.get("fakeapp").is_ok());
+
+            // launch resolves the desktop entry and runs the mock.
+            let msg = crate::install::launch("fakeapp").unwrap();
+            assert!(msg.contains("Launched"), "{msg}");
+
+            // remove deletes the prefix and the menu entry.
+            crate::install::remove("fakeapp", false).unwrap();
+            assert!(!prefix.exists(), "prefix removed");
+            assert!(!desktop.exists(), "desktop removed");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn install_launch_remove_with_mock_proton() {
+        let d = crate::unique_temp_dir("dropin-proton-e2e");
+        let home = d.join("home");
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        write_mock(
+            &bin,
+            "umu-run",
+            "#!/bin/sh\n\
+             mkdir -p \"$WINEPREFIX/drive_c/Program Files/MockGame\"\n\
+             printf MZ > \"$WINEPREFIX/drive_c/Program Files/MockGame/mockgame.exe\"\n\
+             exit 0\n",
+        );
+        let exe = d.join("mockgame.exe");
+        std::fs::write(&exe, b"MZ\x00\x00").unwrap();
+
+        crate::test_env::with_home_and_path(&home, &bin, || {
+            // Pre-populate the GAMEID cache so the test never hits the network.
+            let umu = home.join(".local/share/dropin/umu");
+            std::fs::create_dir_all(&umu).unwrap();
+            std::fs::write(umu.join("gameids.json"), r#"{"mockgame":"umu-12345"}"#).unwrap();
+
+            let opts = InstallOptions {
+                yes: true,
+                runner: Some(super::super::proton::Runner::Proton),
+                ..Default::default()
+            };
+            let outcome = crate::install::install(&exe, &opts).unwrap();
+            assert_eq!(outcome.name, "mockgame");
+            let prefix = prefix_for("mockgame");
+            assert!(prefix
+                .join("drive_c/Program Files/MockGame/mockgame.exe")
+                .exists());
+            let desktop = home.join(".local/share/applications/dropin-mockgame.desktop");
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(text.contains("umu-run"), "launches via umu-run: {text}");
+            assert!(
+                text.contains("GAMEID=umu-12345"),
+                "uses the cached GAMEID: {text}"
+            );
+
+            crate::install::remove("mockgame", false).unwrap();
+            assert!(!prefix.exists(), "prefix removed");
+            assert!(!desktop.exists(), "desktop removed");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn set_runner_rewrites_the_desktop_entry() {
+        let d = crate::unique_temp_dir("dropin-setrunner-e2e");
+        let home = d.join("home");
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        write_mock(
+            &bin,
+            "wine",
+            "#!/bin/sh\n\
+             if [ \"$1\" = wineboot ]; then\n\
+               mkdir -p \"$WINEPREFIX/drive_c/Program Files/MockApp\"\n\
+               exit 0\n\
+             fi\n\
+             mkdir -p \"$WINEPREFIX/drive_c/Program Files/MockApp\"\n\
+             printf MZ > \"$WINEPREFIX/drive_c/Program Files/MockApp/mockapp.exe\"\n\
+             exit 0\n",
+        );
+        write_mock(&bin, "umu-run", "#!/bin/sh\nexit 0\n");
+        let exe = d.join("fakeapp.exe");
+        std::fs::write(&exe, b"MZ\x00\x00").unwrap();
+
+        crate::test_env::with_home_and_path(&home, &bin, || {
+            let umu = home.join(".local/share/dropin/umu");
+            std::fs::create_dir_all(&umu).unwrap();
+            std::fs::write(umu.join("gameids.json"), r#"{"fakeapp":"umu-1"}"#).unwrap();
+
+            let opts = InstallOptions {
+                yes: true,
+                runner: Some(super::super::proton::Runner::Wine),
+                ..Default::default()
+            };
+            crate::install::install(&exe, &opts).unwrap();
+            let desktop = home.join(".local/share/applications/dropin-fakeapp.desktop");
+            assert!(std::fs::read_to_string(&desktop).unwrap().contains("wine"));
+
+            set_runner("fakeapp", super::super::proton::Runner::Proton).unwrap();
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(text.contains("umu-run"), "switched to Proton: {text}");
+            assert_eq!(
+                current_runner("fakeapp"),
+                Some(super::super::proton::Runner::Proton)
+            );
+
+            set_runner("fakeapp", super::super::proton::Runner::Wine).unwrap();
+            let text = std::fs::read_to_string(&desktop).unwrap();
+            assert!(text.contains("wine"), "switched back to Wine: {text}");
+            assert_eq!(
+                current_runner("fakeapp"),
+                Some(super::super::proton::Runner::Wine)
+            );
+
+            crate::install::remove("fakeapp", false).unwrap();
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn pick_runner_auto_detects_games() {
         let opts = InstallOptions::default();

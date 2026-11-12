@@ -151,6 +151,15 @@ The closest thing out there is [exeify](https://github.com/scdouglas1999/exeify)
 - **Rootless by default.** Scripts run sandboxed without admin rights; system installs are opt-in.
 - **Honest about limits.** If dropin can't update something automatically, it says so instead of pretending.
 
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `DROPIN_HOME` | Override the home directory dropin manages (useful for testing). |
+| `DROPIN_INSTALL_TIMEOUT` | Seconds a vendor installer may run before it is killed. Default `7200` (2 hours). |
+| `DROPIN_UMU_OFFLINE` | Set to any value to skip the umu-database lookup and use the generic Proton profile. |
+| `DROPIN_GITHUB_API` | Override the GitHub API base URL (tests / GitHub Enterprise). |
+
 ## Contributing
 
 Issues and PRs welcome. `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets -- -D warnings` need to be clean; CI checks all three.

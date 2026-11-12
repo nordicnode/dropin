@@ -30,10 +30,11 @@ pub(crate) mod test_env {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
-    /// Restores the previous HOME/DROPIN_HOME even if the test panics.
+    /// Restores the previous HOME/DROPIN_HOME/PATH even if the test panics.
     struct EnvRestore {
         dropin: Option<String>,
         home: Option<String>,
+        path: Option<String>,
     }
 
     impl Drop for EnvRestore {
@@ -46,21 +47,40 @@ pub(crate) mod test_env {
                 Some(v) => std::env::set_var("HOME", v),
                 None => std::env::remove_var("HOME"),
             }
+            match &self.path {
+                Some(v) => std::env::set_var("PATH", v),
+                None => std::env::remove_var("PATH"),
+            }
         }
     }
 
     /// Run `f` with `HOME` and `DROPIN_HOME` pointed at `home`, restoring
     /// both afterwards. Serialized against all other users of this helper.
     pub(crate) fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
+        with_env(home, None, f)
+    }
+
+    /// Like [`with_home`], but also prepends `bin_dir` to `PATH` so tests can
+    /// provide mock `wine`/`umu-run` binaries.
+    pub(crate) fn with_home_and_path<T>(home: &Path, bin_dir: &Path, f: impl FnOnce() -> T) -> T {
+        with_env(home, Some(bin_dir), f)
+    }
+
+    fn with_env<T>(home: &Path, bin_dir: Option<&Path>, f: impl FnOnce() -> T) -> T {
         // Recover from a poisoned lock: a panicking test must not cascade
         // into every other test that redirects HOME.
         let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _restore = EnvRestore {
             dropin: std::env::var("DROPIN_HOME").ok(),
             home: std::env::var("HOME").ok(),
+            path: std::env::var("PATH").ok(),
         };
         std::env::set_var("DROPIN_HOME", home);
         std::env::set_var("HOME", home);
+        if let Some(bin) = bin_dir {
+            let old = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{old}", bin.display()));
+        }
         f()
     }
 }

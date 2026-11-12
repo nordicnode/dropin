@@ -50,8 +50,13 @@ All notable changes to dropin are documented here. The format follows
 - The script sandbox probes bubblewrap before running, so a system with
   unprivileged user namespaces disabled gets a clear explanation instead of
   a cryptic mid-install failure.
+- Added end-to-end Wine and Proton tests using mock `wine`/`umu-run`
+  binaries: install, launch, `set-runner`, and remove are now exercised
+  without needing real Wine or a GPU.
 - Added tests for Wine executable selection, runner choice, the umu GAMEID
   disk cache, HTTP body caps, and the process timeout helper.
+- `DROPIN_UMU_OFFLINE=1` skips the umu-database lookup for fully offline
+  installs.
 
 ### Changed
 

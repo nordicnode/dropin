@@ -154,6 +154,11 @@ pub fn resolve_gameid(title: &str) -> String {
         return id.clone();
     }
 
+    // Explicit offline mode: skip the umu-database lookup entirely.
+    if std::env::var_os("DROPIN_UMU_OFFLINE").is_some() {
+        return "umu-default".into();
+    }
+
     let resolved = query_umu_database(title).unwrap_or_else(|| "umu-default".into());
 
     if let Ok(mut cache) = gameid_cache().lock() {
@@ -489,6 +494,18 @@ mod tests {
             )
             .unwrap();
             assert_eq!(resolve_gameid("Cache Test Game"), "umu-99999");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn offline_mode_skips_the_network() {
+        let d = crate::unique_temp_dir("dropin-gameid-offline");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            std::env::set_var("DROPIN_UMU_OFFLINE", "1");
+            assert_eq!(resolve_gameid("Uncached Offline Game"), "umu-default");
+            std::env::remove_var("DROPIN_UMU_OFFLINE");
         });
         let _ = std::fs::remove_dir_all(&d);
     }
