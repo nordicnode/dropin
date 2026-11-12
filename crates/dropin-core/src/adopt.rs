@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn scan_finds_executables() {
-        let d = std::env::temp_dir().join(format!("dropin-adopt-test-{}", std::process::id()));
+        let d = crate::unique_temp_dir("dropin-adopt-elf");
         let home = d.join("home");
         crate::test_env::with_home(&home, || {
             let dir = home.join("testgame");
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn scan_finds_windows_exe() {
-        let d = std::env::temp_dir().join(format!("dropin-adopt-test-{}", std::process::id()));
+        let d = crate::unique_temp_dir("dropin-adopt-exe");
         let home = d.join("home");
         crate::test_env::with_home(&home, || {
             let dir = home.join("wingame");
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn scan_rejects_non_directory() {
-        let d = std::env::temp_dir().join(format!("dropin-adopt-test-{}", std::process::id()));
+        let d = crate::unique_temp_dir("dropin-adopt-nondir");
         let home = d.join("home");
         crate::test_env::with_home(&home, || {
             let file = home.join("notadir.txt");

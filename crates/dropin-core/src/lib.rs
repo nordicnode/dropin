@@ -33,7 +33,9 @@ pub(crate) mod test_env {
     /// Run `f` with `HOME` and `DROPIN_HOME` pointed at `home`, restoring
     /// both afterwards. Serialized against all other users of this helper.
     pub(crate) fn with_home<T>(home: &Path, f: impl FnOnce() -> T) -> T {
-        let _guard = LOCK.lock().unwrap();
+        // Recover from a poisoned lock: a panicking test must not cascade
+        // into every other test that redirects HOME.
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let old_dropin = std::env::var("DROPIN_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         std::env::set_var("DROPIN_HOME", home);
