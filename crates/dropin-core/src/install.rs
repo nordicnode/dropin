@@ -1389,11 +1389,26 @@ pub fn doctor() -> Vec<(String, bool, String)> {
             have("update-desktop-database"),
             "menu refresh".into(),
         ),
-        (
-            "bwrap".into(),
-            have("bwrap"),
-            "sandboxed installer scripts (required for .sh/.run/.bin)".into(),
-        ),
+        {
+            let (ok, why) = if !have("bwrap") {
+                (
+                    false,
+                    "sandboxed installer scripts (required for .sh/.run/.bin)".to_string(),
+                )
+            } else {
+                match handlers::script::bwrap_probe() {
+                    Ok(()) => (
+                        true,
+                        "sandboxed installer scripts (sandbox works)".to_string(),
+                    ),
+                    Err(e) => (
+                        false,
+                        format!("bwrap is installed but can't create a sandbox: {e}"),
+                    ),
+                }
+            };
+            ("bwrap".into(), ok, why)
+        },
         (
             "wine".into(),
             handlers::wine::have_wine(),

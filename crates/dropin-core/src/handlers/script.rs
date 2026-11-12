@@ -319,7 +319,7 @@ fn writable_roots() -> Vec<PathBuf> {
 }
 
 /// Check that bwrap can actually create a sandbox here.
-fn bwrap_probe() -> std::result::Result<(), String> {
+pub(crate) fn bwrap_probe() -> std::result::Result<(), String> {
     let out = Command::new("bwrap")
         .args([
             "--ro-bind",
