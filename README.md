@@ -80,7 +80,7 @@ AppImages live in `~/Applications/<app>/<version>/`, with an `active` symlink po
 
 Update channels get captured at install time (AppImage zsync info, Flatpak remotes). `dropin update` does what it can and tells you plainly about the rest. AppImages update over a native zsync delta, so only the changed blocks come down the wire. The result gets SHA-1 verified, and the new version lands in its own directory, which means `dropin rollback <name>` flips `active` back to the previous version instantly. Only the last two generations are kept; older ones are pruned automatically.
 
-For AppImages from GitHub releases with no zsync channel, `dropin track <name> --github owner/repo` follows the repo instead. If the release ships a detached signature (`.asc`/`.sig`), dropin pins the signing key on first install and refuses updates whose signature is missing, unreadable, or from a different key (signature continuity, not full cryptographic verification). Update checks use ETag caching so a quiet week costs you zero API quota.
+For AppImages from GitHub releases with no zsync channel, `dropin track <name> --github owner/repo` follows the repo instead. If the release ships a detached signature (`.asc`/`.sig`), dropin verifies it with `gpg` when the signer's public key is in your keyring, and refuses a BAD signature outright. When gpg or the key isn't available, it falls back to pinning the issuer key on first install and refusing updates whose signature is missing, unreadable, or from a different key (continuity, not verification). Update checks use ETag caching so a quiet week costs you zero API quota.
 
 ## Installer scripts: audited, sandboxed, reversible
 

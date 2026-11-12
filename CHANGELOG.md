@@ -40,6 +40,13 @@ All notable changes to dropin are documented here. The format follows
 - **`doctor`** checks `bwrap`/`umu-run` and portable Wine, and broken-menu
   detection covers every tracked desktop entry, not just AppImages.
 
+### Security
+
+- Detached signatures are now **cryptographically verified with gpg** when
+  the signer's public key is in the user's keyring. A BAD signature refuses
+  the install/update outright. When gpg or the key is unavailable, dropin
+  falls back to issuer-key continuity pinning and says so explicitly.
+
 ### Hardening
 
 - All HTTP requests now have connect/response/body timeouts, so a stalled

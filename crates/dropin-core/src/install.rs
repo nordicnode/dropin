@@ -85,11 +85,26 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // (TOFU) if a detached signature accompanies the source file. A
     // signature that exists but can't be parsed is reported, not ignored.
     let signing_key = match crate::signatures::check(src) {
-        crate::signatures::SigCheck::Found { fingerprint } => {
+        crate::signatures::SigCheck::Found {
+            fingerprint,
+            verified: true,
+        } => {
+            println!("dropin: signature verified with gpg (key {fingerprint})");
+            Some(fingerprint)
+        }
+        crate::signatures::SigCheck::Found {
+            fingerprint,
+            verified: false,
+        } => {
             println!(
-                "dropin: signature found, issuer key {fingerprint} pinned (continuity only; the signature itself is not cryptographically verified)"
+                "dropin: signature found, issuer key {fingerprint} pinned (continuity only; install gpg and the public key to verify)"
             );
             Some(fingerprint)
+        }
+        crate::signatures::SigCheck::Bad(why) => {
+            return Err(Error::Refused(format!(
+                "signature check failed — refusing to install.\n  {why}\nThis usually means the download was modified after signing; re-download it."
+            )));
         }
         crate::signatures::SigCheck::Invalid(why) => {
             eprintln!("dropin: warning: a signature file is present but could not be read ({why}); continuing without pinning");
@@ -1127,7 +1142,21 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
     // is unreadable, refuse: otherwise stripping the .asc would bypass the
     // continuity check entirely.
     match crate::signatures::check(&downloaded) {
-        crate::signatures::SigCheck::Found { fingerprint } => {
+        crate::signatures::SigCheck::Bad(why) => {
+            return UpdateReport {
+                name,
+                status: UpdateStatus::Failed(format!(
+                    "release signature is BAD ({why}) — refusing update"
+                )),
+            };
+        }
+        crate::signatures::SigCheck::Found {
+            fingerprint,
+            verified,
+        } => {
+            if verified {
+                eprintln!("dropin: update signature verified with gpg");
+            }
             match &inst.signing_key {
                 Some(pinned) if pinned != &fingerprint => {
                     return UpdateReport {
