@@ -122,24 +122,16 @@ pub fn install_via_package_manager() -> Result<bool> {
         Error::Unsupported("unsupported distro for automatic Wine install".into())
     })?;
 
-    // Prefer pkexec (graphical prompt) when available, fall back to sudo.
-    let escalate = if crate::have("pkexec") {
-        "pkexec"
-    } else {
-        "sudo"
-    };
     let arg_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let status = std::process::Command::new(escalate)
-        .arg(&cmd)
-        .args(&arg_strs)
+    let status = super::privileged_command(&cmd, &arg_strs)
         .stdin(std::process::Stdio::null())
         .status()
-        .map_err(|e| Error::Command(format!("couldn't run {escalate}: {e}")))?;
+        .map_err(|e| Error::Command(format!("couldn't run package manager: {e}")))?;
 
     if !status.success() {
         return Err(Error::Command(format!(
-            "{escalate} {cmd} failed — Wine wasn't installed"
+            "{cmd} failed — Wine wasn't installed"
         )));
     }
 

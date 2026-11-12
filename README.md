@@ -159,6 +159,7 @@ The closest thing out there is [exeify](https://github.com/scdouglas1999/exeify)
 | `DROPIN_INSTALL_TIMEOUT` | Seconds a vendor installer may run before it is killed. Default `7200` (2 hours). |
 | `DROPIN_UMU_OFFLINE` | Set to any value to skip the umu-database lookup and use the generic Proton profile. |
 | `DROPIN_GITHUB_API` | Override the GitHub API base URL (tests / GitHub Enterprise). |
+| `DROPIN_ESCALATE` | Command used for `--system` installs/removals. Defaults to `pkexec`, then `sudo`. Set to an empty value to run the package manager directly (root containers/CI). |
 
 ## Contributing
 

@@ -337,14 +337,11 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         .to_str()
         .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let (cmd, args): (&str, Vec<&str>) =
+    let (pm, args): (&str, Vec<&str>) =
         if os_release.contains("fedora") || os_release.contains("rhel") {
-            (super::escalate(), vec!["dnf", "install", "-y", s])
+            ("dnf", vec!["install", "-y", s])
         } else if os_release.contains("suse") || os_release.contains("opensuse") {
-            (
-                super::escalate(),
-                vec!["zypper", "--non-interactive", "install", s],
-            )
+            ("zypper", vec!["--non-interactive", "install", s])
         } else {
             return Err(Error::Refused(
                 "--system install of a .rpm is only supported on Fedora/RHEL/SUSE; \
@@ -352,8 +349,7 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
                     .into(),
             ));
         };
-    let status = std::process::Command::new(cmd)
-        .args(&args)
+    let status = super::privileged_command(pm, &args)
         .status()
         .map_err(|e| Error::Command(format!("system install failed: {e}")))?;
     if !status.success() {

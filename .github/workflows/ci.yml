@@ -22,3 +22,39 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+
+  system-install-debian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace
+      - name: Download a small .deb
+        run: curl -sL -o /tmp/hello.deb http://ftp.debian.org/debian/pool/main/h/hello/hello_2.10-3_amd64.deb
+      - name: System install and remove (apt)
+        env:
+          DROPIN_ESCALATE: sudo
+        run: |
+          ./target/debug/dropin install --yes --system /tmp/hello.deb
+          ./target/debug/dropin list
+          ./target/debug/dropin remove hello
+
+  system-install-fedora:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace
+      - name: Download a small .rpm
+        run: curl -sL -o /tmp/hello.rpm https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/Packages/h/hello-2.12.2-2.fc43.x86_64.rpm
+      - name: System install and remove (dnf in a Fedora container)
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" -v "/tmp/hello.rpm:/tmp/hello.rpm" -w /src \
+            -e DROPIN_ESCALATE="" -e DROPIN_HOME=/tmp/dropin-home \
+            fedora:latest \
+            sh -c './target/debug/dropin install --yes --system /tmp/hello.rpm && ./target/debug/dropin list && ./target/debug/dropin remove hello'

@@ -75,6 +75,12 @@ All notable changes to dropin are documented here. The format follows
   both parsers and asserts they never panic.
 - `DROPIN_UMU_OFFLINE=1` skips the umu-database lookup for fully offline
   installs.
+- `DROPIN_ESCALATE` overrides the privilege-escalation command (default
+  `pkexec`, then `sudo`); an empty value runs the package manager directly.
+- `bzip2` is now statically linked, so the release binary only depends on
+  glibc/libm/libgcc and runs across distros.
+- CI now exercises real `--system` install/remove on Debian (apt) and
+  Fedora (dnf in a container).
 
 ### Changed
 

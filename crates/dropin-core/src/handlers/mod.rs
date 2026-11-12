@@ -153,14 +153,32 @@ pub fn run_with_timeout(
     }
 }
 
-/// The privilege-escalation command to use: pkexec when available (graphical
-/// prompt), otherwise sudo.
-pub fn escalate() -> &'static str {
-    if crate::have("pkexec") {
-        "pkexec"
-    } else {
-        "sudo"
+/// The privilege-escalation command to use: `DROPIN_ESCALATE` if set,
+/// otherwise pkexec when available (graphical prompt), otherwise sudo.
+/// An empty value means "run directly" (useful in root containers/CI).
+pub fn escalate() -> String {
+    if let Ok(v) = std::env::var("DROPIN_ESCALATE") {
+        return v;
     }
+    if crate::have("pkexec") {
+        "pkexec".into()
+    } else {
+        "sudo".into()
+    }
+}
+
+/// Build a command that runs `program` with privilege escalation.
+pub fn privileged_command(program: &str, args: &[&str]) -> std::process::Command {
+    let escalate = escalate();
+    let mut cmd = if escalate.is_empty() {
+        std::process::Command::new(program)
+    } else {
+        let mut c = std::process::Command::new(&escalate);
+        c.arg(program);
+        c
+    };
+    cmd.args(args);
+    cmd
 }
 
 /// Remove a package that was installed with `--system`, using the distro's
@@ -188,10 +206,7 @@ pub fn remove_system_package(name: &str) -> Result<String> {
             "no supported package manager to remove system package '{name}'"
         )));
     };
-    let escalate = escalate();
-    let status = std::process::Command::new(escalate)
-        .arg(pm)
-        .args(&args)
+    let status = privileged_command(pm, &args)
         .status()
         .map_err(|e| Error::Command(format!("system removal failed: {e}")))?;
     if !status.success() {
@@ -205,6 +220,17 @@ pub fn remove_system_package(name: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privileged_command_honors_dropin_escalate() {
+        std::env::set_var("DROPIN_ESCALATE", "");
+        let cmd = privileged_command("echo", &["hi"]);
+        assert_eq!(cmd.get_program(), "echo");
+        std::env::set_var("DROPIN_ESCALATE", "sudo");
+        let cmd = privileged_command("echo", &["hi"]);
+        assert_eq!(cmd.get_program(), "sudo");
+        std::env::remove_var("DROPIN_ESCALATE");
+    }
 
     #[test]
     fn run_with_timeout_returns_status() {

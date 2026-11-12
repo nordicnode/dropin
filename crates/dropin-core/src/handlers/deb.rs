@@ -284,11 +284,11 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     // Detect distro family from /etc/os-release ID_LIKE / ID.
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("ID_LIKE=debian")
+    let (pm, args): (&str, Vec<&str>) = if os_release.contains("ID_LIKE=debian")
         || os_release.contains("\nID=debian")
         || os_release.contains("\nID=ubuntu")
     {
-        (super::escalate(), vec!["apt", "install", "-y", s])
+        ("apt", vec!["install", "-y", s])
     } else {
         return Err(Error::Refused(
             "--system install of a .deb is only supported on Debian-based distros; \
@@ -296,8 +296,7 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
                 .into(),
         ));
     };
-    let status = std::process::Command::new(cmd)
-        .args(&args)
+    let status = super::privileged_command(pm, &args)
         .status()
         .map_err(|e| Error::Command(format!("system install failed: {e}")))?;
     if !status.success() {

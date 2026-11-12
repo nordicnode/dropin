@@ -106,17 +106,10 @@ pub fn bootstrap_umu(progress: &dyn Fn(&str)) -> Result<PathBuf> {
 }
 
 fn try_pkg_install(pkg_cmd: &str, args: &[&str], _progress: &dyn Fn(&str)) -> Result<()> {
-    let escalate = if crate::have("pkexec") {
-        "pkexec"
-    } else {
-        "sudo"
-    };
-    let status = std::process::Command::new(escalate)
-        .arg(pkg_cmd)
-        .args(args)
+    let status = super::privileged_command(pkg_cmd, args)
         .stdin(std::process::Stdio::null())
         .status()
-        .map_err(|e| Error::Command(format!("couldn't run {escalate}: {e}")))?;
+        .map_err(|e| Error::Command(format!("couldn't run package manager: {e}")))?;
     if status.success() {
         Ok(())
     } else {
