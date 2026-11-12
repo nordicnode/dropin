@@ -81,6 +81,8 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         return Err(Error::Refused(hint));
     }
     std::fs::create_dir_all(&ver_dir)?;
+    // If anything below fails, remove the half-installed generation.
+    let mut guard = super::RootGuard::new(ver_dir.clone());
 
     if opts.keep_source {
         std::fs::copy(src, &dest)?;
@@ -121,10 +123,8 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
                     }
                 }
             }
-            let (entry_path, mut extra) = match meta.desktop_file {
-                Some(df) => adopt_desktop_file_appimage(&df, &slug, &d.name_hint, &active)?,
-                None => generate_entry(&d.name_hint, &slug, &active)?,
-            };
+            let (entry_path, mut extra) =
+                best_effort_entry(meta.desktop_file.as_deref(), &slug, &d.name_hint, &active);
             let _ = entry_path;
             extra_paths.append(&mut extra);
             let _ = std::fs::remove_dir_all(meta.scratch);
@@ -133,7 +133,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             eprintln!(
                 "warning: could not extract AppImage metadata ({e}); using a generic menu entry"
             );
-            let (_, mut extra) = generate_entry(&d.name_hint, &slug, &active)?;
+            let (_, mut extra) = best_effort_entry(None, &slug, &d.name_hint, &active);
             extra_paths.append(&mut extra);
         }
     }
@@ -155,6 +155,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let mut paths = vec![app_dir];
     paths.extend(extra_paths);
 
+    guard.disarm();
     Ok(InstallOutcome {
         name: slug,
         version,
@@ -307,6 +308,32 @@ struct ExtractedMeta {
 /// Preferred path: read the squashfs payload directly (pure Rust, no
 /// execution). Only if that fails (e.g. type-1 AppImages) do we fall back to
 /// `<appimage> --appimage-extract`, which executes the AppImage's runtime.
+/// Create a menu entry without failing the install. The AppImage is already
+/// in place and active at this point; a menu-entry problem should not leave
+/// an untracked install behind.
+fn best_effort_entry(
+    desktop: Option<&Path>,
+    slug: &str,
+    name: &str,
+    active: &Path,
+) -> (PathBuf, Vec<PathBuf>) {
+    if let Some(df) = desktop {
+        match adopt_desktop_file_appimage(df, slug, name, active) {
+            Ok(v) => return v,
+            Err(e) => eprintln!(
+                "warning: could not adopt the embedded menu entry ({e}); generating a generic one"
+            ),
+        }
+    }
+    match generate_entry(name, slug, active) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("warning: could not create a menu entry: {e}");
+            (PathBuf::new(), Vec::new())
+        }
+    }
+}
+
 fn extract_metadata(appimage: &Path) -> Result<ExtractedMeta> {
     let scratch = crate::unique_temp_dir(&format!(
         "dropin-ai-{}",

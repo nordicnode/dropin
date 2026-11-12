@@ -39,7 +39,12 @@ fn pad8(n: usize) -> usize {
 }
 
 /// Parse one header at `pos`. Returns (entries, data_store_start, header_end).
-fn parse_header(data: &[u8], pos: usize) -> Result<(Vec<IndexEntry>, usize, usize)> {
+///
+/// `pad` controls whether the data store is rounded up to an 8-byte boundary.
+/// The signature header is padded (the main header must start aligned), but
+/// the main header is not: the payload starts immediately after its data
+/// store. Padding the main header skips the first bytes of the payload.
+fn parse_header(data: &[u8], pos: usize, pad: bool) -> Result<(Vec<IndexEntry>, usize, usize)> {
     if data.len() < pos + 16 || data[pos..pos + 3] != [0x8E, 0xAD, 0xE8] {
         return Err(Error::Unsupported("bad RPM header magic".into()));
     }
@@ -60,7 +65,11 @@ fn parse_header(data: &[u8], pos: usize) -> Result<(Vec<IndexEntry>, usize, usiz
         });
     }
     let store = entries_start + count * 16;
-    let end = store + pad8(data_len);
+    let end = if pad {
+        store + pad8(data_len)
+    } else {
+        store + data_len
+    };
     if data.len() < end {
         return Err(Error::Unsupported("truncated RPM header data".into()));
     }
@@ -90,10 +99,12 @@ fn read_meta(path: &Path) -> Result<RpmMeta> {
         return Err(Error::Unsupported("not an RPM (bad lead magic)".into()));
     }
     let mut pos = 96usize;
-    // Skip the signature header; we only need its extent.
-    let (_, _, sig_end) = parse_header(&data, pos)?;
+    // Skip the signature header; it is padded to 8 bytes so the main header
+    // starts aligned.
+    let (_, _, sig_end) = parse_header(&data, pos, true)?;
     pos = sig_end;
-    let (entries, store, hdr_end) = parse_header(&data, pos)?;
+    // The main header is not padded: the payload follows its data store.
+    let (entries, store, hdr_end) = parse_header(&data, pos, false)?;
     let name = header_string(&data, &entries, store, TAG_NAME)
         .ok_or_else(|| Error::Unsupported("RPM has no name".into()))?;
     Ok(RpmMeta {
@@ -165,7 +176,9 @@ fn extract_cpio(payload: &[u8], dest: &Path) -> Result<()> {
         let name_bytes = &payload[pos..pos + namesize];
         let name = std::str::from_utf8(&name_bytes[..namesize.saturating_sub(1)])
             .map_err(|_| Error::Unsupported("bad cpio filename".into()))?;
-        pos += (namesize + 3) & !3;
+        // newc pads the fixed 110-byte header *plus* the name to a 4-byte
+        // boundary, not the name alone (110 is not 4-byte aligned).
+        pos = (pos + namesize + 3) & !3;
         if name == "TRAILER!!!" {
             break;
         }
@@ -238,7 +251,14 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         )));
     }
     std::fs::create_dir_all(&root)?;
-    let payload = payload_bytes(src, &meta)?;
+    let mut guard = super::RootGuard::new(root.clone());
+    let payload = match payload_bytes(src, &meta) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(e);
+        }
+    };
     if let Err(e) = extract_cpio(&payload, &root) {
         let _ = std::fs::remove_dir_all(&root);
         return Err(e);
@@ -301,6 +321,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     }
 
     let _ = sha256_of(src).ok();
+    guard.disarm();
     Ok(InstallOutcome {
         name: pkg,
         version: meta.version,
@@ -316,22 +337,21 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         .to_str()
         .ok_or_else(|| Error::Unsupported("bad path".into()))?;
     let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let (cmd, args): (&str, Vec<&str>) = if os_release.contains("fedora")
-        || os_release.contains("rhel")
-    {
-        (super::escalate(), vec!["dnf", "install", "-y", s])
-    } else if os_release.contains("arch") {
-        (super::escalate(), vec!["pacman", "-U", "--noconfirm", s])
-    } else if os_release.contains("suse") || os_release.contains("opensuse") {
-        (
-            super::escalate(),
-            vec!["zypper", "--non-interactive", "install", s],
-        )
-    } else {
-        return Err(Error::Refused(
-            "no supported system package manager detected for --system install of an rpm".into(),
-        ));
-    };
+    let (cmd, args): (&str, Vec<&str>) =
+        if os_release.contains("fedora") || os_release.contains("rhel") {
+            (super::escalate(), vec!["dnf", "install", "-y", s])
+        } else if os_release.contains("suse") || os_release.contains("opensuse") {
+            (
+                super::escalate(),
+                vec!["zypper", "--non-interactive", "install", s],
+            )
+        } else {
+            return Err(Error::Refused(
+                "--system install of a .rpm is only supported on Fedora/RHEL/SUSE; \
+             the default rootless install works everywhere"
+                    .into(),
+            ));
+        };
     let status = std::process::Command::new(cmd)
         .args(&args)
         .status()
@@ -339,14 +359,17 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
     if !status.success() {
         return Err(Error::Command("system package install failed".into()));
     }
-    let pkg = slugify(&read_meta(src).map(|m| m.name).unwrap_or_default());
+    let meta = read_meta(src).ok();
+    let pkg = slugify(&meta.as_ref().map(|m| m.name.clone()).unwrap_or_default());
+    // Keep the real package name (dots/plus signs intact) for removal.
+    let real_name = meta.map(|m| m.name).unwrap_or_else(|| pkg.clone());
     Ok(InstallOutcome {
         name: pkg,
         version: None,
         install_root: None,
         paths: vec![],
         external: true,
-        update_info: None,
+        update_info: Some(real_name),
     })
 }
 
@@ -363,8 +386,12 @@ mod tests {
     }
 
     /// Minimal but spec-shaped RPM: lead + empty sig header + header with
-    /// NAME/VERSION/PAYLOADCOMPRESSOR + gzip'd cpio payload.
+    /// NAME/VERSION/PAYLOADCOMPRESSOR + compressed cpio payload.
     fn build_fixture(dir: &Path) -> PathBuf {
+        build_fixture_with(dir, "gzip")
+    }
+
+    fn build_fixture_with(dir: &Path, compressor: &str) -> PathBuf {
         // --- cpio newc payload ---
         let mut cpio = Vec::new();
         let mut entry = |name: &str, mode: u32, data: &[u8]| {
@@ -390,7 +417,8 @@ mod tests {
             cpio.extend_from_slice(h.as_bytes());
             cpio.extend_from_slice(name.as_bytes());
             cpio.push(0);
-            let namepad = (4 - (name.len() + 1) % 4) % 4;
+            // newc pads the 110-byte header plus the name to 4 bytes.
+            let namepad = (4 - (110 + name.len() + 1) % 4) % 4;
             cpio.extend(std::iter::repeat_n(0, namepad));
             cpio.extend_from_slice(data);
             let datapad = (4 - data.len() % 4) % 4;
@@ -412,12 +440,23 @@ mod tests {
         );
         entry("TRAILER!!!", 0, &[]);
 
-        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-        enc.write_all(&cpio).unwrap();
-        let payload = enc.finish().unwrap();
+        let payload = match compressor {
+            "gzip" => {
+                let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+                enc.write_all(&cpio).unwrap();
+                enc.finish().unwrap()
+            }
+            "xz" => {
+                let mut enc = liblzma::write::XzEncoder::new(Vec::new(), 6);
+                enc.write_all(&cpio).unwrap();
+                enc.finish().unwrap()
+            }
+            "zstd" => zstd::encode_all(std::io::Cursor::new(&cpio), 3).unwrap(),
+            other => panic!("unsupported test compressor {other}"),
+        };
 
         // --- header builder ---
-        fn header(entries: &[(u32, u32, u32, u32)], store: &[u8]) -> Vec<u8> {
+        fn header(entries: &[(u32, u32, u32, u32)], store: &[u8], pad: bool) -> Vec<u8> {
             let mut h = vec![0x8E, 0xAD, 0xE8, 1, 0, 0, 0, 0];
             u32be(entries.len() as u32, &mut h);
             u32be(store.len() as u32, &mut h);
@@ -428,18 +467,20 @@ mod tests {
                 u32be(*cnt, &mut h);
             }
             h.extend_from_slice(store);
-            while h.len() % 8 != 0 {
-                h.push(0);
+            if pad {
+                while h.len() % 8 != 0 {
+                    h.push(0);
+                }
             }
             h
         }
         let name = b"demotool2\0";
         let version = b"1.0\0";
-        let comp = b"gzip\0";
+        let comp = format!("{compressor}\0").into_bytes();
         let mut store = Vec::new();
         store.extend_from_slice(name);
         store.extend_from_slice(version);
-        store.extend_from_slice(comp);
+        store.extend_from_slice(&comp);
         let main = header(
             &[
                 (TAG_NAME, TYPE_STRING, 0, 1),
@@ -452,8 +493,9 @@ mod tests {
                 ),
             ],
             &store,
+            false,
         );
-        let sig = header(&[], &[]);
+        let sig = header(&[], &[], true);
 
         // --- lead (96 bytes) ---
         let mut rpm = vec![0xED, 0xAB, 0xEE, 0xDB, 3, 0];
@@ -471,7 +513,7 @@ mod tests {
         rpm.extend_from_slice(&main);
         rpm.extend_from_slice(&payload);
 
-        let path = dir.join("demotool2-1.0.x86_64.rpm");
+        let path = dir.join(format!("demotool2-1.0-{compressor}.x86_64.rpm"));
         std::fs::write(&path, &rpm).unwrap();
         path
     }
@@ -506,6 +548,24 @@ mod tests {
             .join("usr/share/applications/demotool2.desktop")
             .exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extracts_xz_and_zstd_payloads() {
+        for compressor in ["xz", "zstd"] {
+            let dir = crate::unique_temp_dir(&format!("dropin-rpm-{compressor}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let rpm = build_fixture_with(&dir, compressor);
+            let meta = read_meta(&rpm).unwrap();
+            assert_eq!(meta.compressor, compressor);
+            let payload = payload_bytes(&rpm, &meta).unwrap();
+            assert_eq!(&payload[..6], b"070701", "{compressor} payload is cpio");
+            let dest = dir.join("out");
+            std::fs::create_dir_all(&dest).unwrap();
+            extract_cpio(&payload, &dest).unwrap();
+            assert!(dest.join("usr/bin/demotool2").exists());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

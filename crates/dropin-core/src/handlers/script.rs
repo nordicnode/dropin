@@ -7,8 +7,8 @@
 //!    risky patterns (deleting files, downloading code, asking for admin
 //!    rights…). Every finding is explained in plain language.
 //! 2. **Sandbox.** The installer runs under bubblewrap: no network unless
-//!    you allow it, a read-only system, and only four folders writable
-//!    (`~/.local`, `~/Applications`, `~/bin`, `~/.config`). Your SSH keys
+//!    you allow it, a read-only system, and only five folders writable
+//!    (`~/.local`, `~/Applications`, `~/bin`, `~/.config`, `~/.cache`). Your SSH keys
 //!    are hidden. If bubblewrap isn't installed, dropin refuses to run the
 //!    script at all.
 //! 3. **Undo.** Everything the installer adds, removes, or changes is
@@ -77,6 +77,16 @@ pub fn audit(src: &Path) -> Vec<Finding> {
     };
     let lower = text.to_lowercase();
     let mut out: Vec<Finding> = Vec::new();
+
+    if text.trim().is_empty() {
+        out.push(finding(
+            Severity::Warning,
+            "This file is empty",
+            "There is nothing to run. The download may have failed or the file may be a \
+             placeholder. Re-download it before installing.",
+        ));
+        return out;
+    }
 
     // --- Danger -----------------------------------------------------------
     if has_rm_rf(&lower) {
@@ -294,7 +304,13 @@ pub fn plan(src: &Path) -> Result<InstallPlan> {
 fn writable_roots() -> Vec<PathBuf> {
     let home = crate::home_dir();
     let mut roots = Vec::new();
-    for rel in ["./.local", "./Applications", "./bin", "./.config"] {
+    for rel in [
+        "./.local",
+        "./Applications",
+        "./bin",
+        "./.config",
+        "./.cache",
+    ] {
         let p = home.join(rel.trim_start_matches("./"));
         let _ = std::fs::create_dir_all(&p);
         roots.push(p);
@@ -699,6 +715,7 @@ pub fn undo_install(slug: &str) -> Result<String> {
     for p in &added_sorted {
         if crate::ledger::remove_path(p).is_ok() {
             removed += 1;
+            remove_empty_parents(p, &home);
         }
     }
     std::fs::remove_dir_all(&rec.backup_dir).ok();
@@ -713,6 +730,28 @@ pub fn undo_install(slug: &str) -> Result<String> {
         ));
     }
     Ok(parts.join(", ") + ".")
+}
+
+/// Remove now-empty parent directories of a deleted file, stopping at the
+/// writable roots so we never delete `~/.local`, `~/.config`, etc.
+fn remove_empty_parents(path: &Path, home: &Path) {
+    let stop = [
+        home.join(".local"),
+        home.join(".config"),
+        home.join(".cache"),
+        home.join("Applications"),
+        home.join("bin"),
+    ];
+    let mut cur = path.parent();
+    while let Some(dir) = cur {
+        if dir == home || stop.contains(&dir.to_path_buf()) || !dir.starts_with(home) {
+            break;
+        }
+        if std::fs::remove_dir(dir).is_err() {
+            break; // not empty (or not ours)
+        }
+        cur = dir.parent();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -991,8 +1030,18 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
             std::fs::remove_file(undo_path(&slug)).ok();
             return install(src, &retry_opts);
         }
+        // Revert partial changes so a failed install doesn't leave debris
+        // the user can't clean up (the ledger entry is only written on
+        // success, so `dropin remove` can't reach it).
+        let undo_note = match undo_install(&slug) {
+            Ok(m) => format!(" Partial changes were reverted: {m}"),
+            Err(e) => format!(
+                " Partial changes could not be reverted automatically ({e}); the undo record is at {}.",
+                undo_path(&slug).display()
+            ),
+        };
         return Err(Error::Command(format!(
-            "installer exited with an error — {}",
+            "installer exited with an error — {}{undo_note}",
             report
                 .failure_hint
                 .as_deref()
@@ -1068,6 +1117,18 @@ mod tests {
             plan.steps.iter().any(|s| s.contains("[DANGER]")),
             "dry run should surface the audit: {:?}",
             plan.steps
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn audit_flags_empty_script() {
+        let d = tmpdir("empty");
+        let p = write_script(&d, "empty.sh", "");
+        let findings = audit(&p);
+        assert!(
+            findings.iter().any(|f| f.title.contains("empty")),
+            "empty file flagged: {findings:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
     }

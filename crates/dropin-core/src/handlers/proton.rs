@@ -455,9 +455,7 @@ pub fn proton_launch_cmd(
 /// GE-Proton and the Steam Runtime are auto-downloaded by umu on first use.
 pub fn setup_proton(progress: &dyn Fn(&str)) -> Result<PathBuf> {
     let umu = bootstrap_umu(progress)?;
-    progress(
-        "Proton support is ready. GE-Proton will download automatically on first game launch.",
-    );
+    progress("umu-launcher is ready.");
     Ok(umu)
 }
 

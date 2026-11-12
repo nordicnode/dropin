@@ -89,49 +89,55 @@ fn check_fuse(installs: &[Install]) -> Vec<HealthIssue> {
 fn check_broken_exec(dirs: &UserDirs, installs: &[Install]) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
     for inst in installs {
-        // Menu entries are written as dropin-<slug>.desktop.
-        let desktop = dirs
-            .desktop_entries
-            .join(format!("dropin-{}.desktop", inst.name));
-        let text = match std::fs::read_to_string(&desktop) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let exec = text
-            .lines()
-            .find_map(|l| l.strip_prefix("Exec="))
-            .map(str::trim)
-            .unwrap_or("");
-        // `env VAR=... command` entries (Wine/Proton) are resolved by the
-        // runner, not by us; skip them rather than flagging `env` itself.
-        if exec.starts_with("env ") {
-            continue;
-        }
-        let bin = exec.split_whitespace().next().unwrap_or("");
-        if bin.is_empty() || Path::new(bin).exists() {
-            continue;
-        }
-        // The known-bad pattern: <image>/AppRun where <image> is a file.
-        let hint = if let Some(img) = bin.strip_suffix("/AppRun") {
-            if Path::new(img).is_file() {
-                format!(
-                    "this is the old `<AppImage>/AppRun` bug — edit {} and change Exec to: Exec={img}",
-                    desktop.display()
-                )
+        // A package can ship several menu entries (e.g. xterm + uxterm), so
+        // check every tracked entry, not just dropin-<slug>.desktop.
+        for f in &inst.files {
+            let desktop = Path::new(f);
+            if !desktop.starts_with(&dirs.desktop_entries)
+                || desktop.extension().map(|e| e != "desktop").unwrap_or(true)
+            {
+                continue;
+            }
+            let text = match std::fs::read_to_string(desktop) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let exec = text
+                .lines()
+                .find_map(|l| l.strip_prefix("Exec="))
+                .map(str::trim)
+                .unwrap_or("");
+            // `env VAR=... command` entries (Wine/Proton) are resolved by the
+            // runner, not by us; skip them rather than flagging `env` itself.
+            if exec.starts_with("env ") {
+                continue;
+            }
+            let bin = exec.split_whitespace().next().unwrap_or("");
+            if bin.is_empty() || Path::new(bin).exists() {
+                continue;
+            }
+            // The known-bad pattern: <image>/AppRun where <image> is a file.
+            let hint = if let Some(img) = bin.strip_suffix("/AppRun") {
+                if Path::new(img).is_file() {
+                    format!(
+                        "this is the old `<AppImage>/AppRun` bug — edit {} and change Exec to: Exec={img}",
+                        desktop.display()
+                    )
+                } else {
+                    format!("Exec points to {bin}, which doesn't exist — reinstall the app")
+                }
             } else {
                 format!("Exec points to {bin}, which doesn't exist — reinstall the app")
-            }
-        } else {
-            format!("Exec points to {bin}, which doesn't exist — reinstall the app")
-        };
-        issues.push(HealthIssue {
-            kind: HealthKind::BrokenExec,
-            message: format!(
-                "'{}' menu entry points at a missing program: {bin}",
-                inst.name
-            ),
-            hint,
-        });
+            };
+            issues.push(HealthIssue {
+                kind: HealthKind::BrokenExec,
+                message: format!(
+                    "'{}' menu entry points at a missing program: {bin}",
+                    inst.name
+                ),
+                hint,
+            });
+        }
     }
     issues
 }
@@ -569,7 +575,11 @@ mod tests {
             ),
         )
         .unwrap();
-        let inst = install("myapp", vec![img.display().to_string()]);
+        let desktop = dirs.desktop_entries.join("dropin-myapp.desktop");
+        let inst = install(
+            "myapp",
+            vec![img.display().to_string(), desktop.display().to_string()],
+        );
         let issues = check_broken_exec(&dirs, &[inst]);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].kind, HealthKind::BrokenExec);
@@ -590,7 +600,11 @@ mod tests {
             format!("[Desktop Entry]\nName=MyApp\nExec={}\n", img.display()),
         )
         .unwrap();
-        let inst = install("myapp", vec![img.display().to_string()]);
+        let desktop = dirs.desktop_entries.join("dropin-myapp.desktop");
+        let inst = install(
+            "myapp",
+            vec![img.display().to_string(), desktop.display().to_string()],
+        );
         assert!(check_broken_exec(&dirs, &[inst]).is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }

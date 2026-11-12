@@ -15,6 +15,31 @@ pub mod wine_setup;
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 
+/// Removes a freshly-created install root if the handler fails partway
+/// through. Disarm it once the install is complete and recorded.
+pub struct RootGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl RootGuard {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RootGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct InstallOptions {
     /// Skip interactive confirmations (scripts still need explicit consent).

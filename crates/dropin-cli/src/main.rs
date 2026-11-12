@@ -128,7 +128,8 @@ enum Cmd {
         /// Output file path.
         file: PathBuf,
     },
-    /// Import an app list from a JSON file.
+    /// Import an app list from a JSON file. Re-installs apps whose original
+    /// source file still exists; others are reported as skipped.
     Import {
         /// Input file path.
         file: PathBuf,
@@ -136,6 +137,12 @@ enum Cmd {
 }
 
 fn main() {
+    // A closed pipe (e.g. `dropin list | head`) should end the process
+    // quietly, not panic inside println!.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     if let Err(e) = run() {
         eprintln!("dropin: error: {e}");
         std::process::exit(1);
@@ -151,7 +158,7 @@ fn run() -> dropin_core::Result<()> {
             println!("file:    {}", file.display());
             println!(
                 "format:  {} {}",
-                d.format.label(),
+                dropin_core::install::format_label(&d, &file),
                 if d.by_magic {
                     "(magic bytes)"
                 } else {
@@ -378,7 +385,7 @@ fn run() -> dropin_core::Result<()> {
         }
         Cmd::SetEnv { name, key, value } => {
             let ledger = dropin_core::ledger::Ledger::open()?;
-            let mut env = ledger.env_vars(&name).unwrap_or_default();
+            let mut env = ledger.env_vars(&name)?;
             env.insert(key.clone(), value.clone());
             let json = serde_json::to_string(&env).map_err(|e| {
                 dropin_core::Error::Unsupported(format!("couldn't save env vars: {e}"))
@@ -389,7 +396,7 @@ fn run() -> dropin_core::Result<()> {
         }
         Cmd::UnsetEnv { name, key } => {
             let ledger = dropin_core::ledger::Ledger::open()?;
-            let mut env = ledger.env_vars(&name).unwrap_or_default();
+            let mut env = ledger.env_vars(&name)?;
             env.remove(&key);
             let json = serde_json::to_string(&env).map_err(|e| {
                 dropin_core::Error::Unsupported(format!("couldn't save env vars: {e}"))

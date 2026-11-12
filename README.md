@@ -33,7 +33,7 @@ $ # now hand-write a .desktop file for the menu, find an icon, hope you
 $ # remember all of this when you want it gone
 ```
 
-With dropin you just point it at the file. It shows you exactly what it's about to do. You confirm. It's installed with a menu entry and clean uninstall tracking. Months later, when you're done with it, `dropin remove` deletes every trace.
+With dropin you just point it at the file. It shows you exactly what it's about to do, then installs it with a menu entry and clean uninstall tracking. Installer scripts and Windows installers ask for explicit confirmation first. Months later, when you're done with it, `dropin remove` deletes every trace.
 
 ## See it in action
 
@@ -93,6 +93,12 @@ For AppImages from GitHub releases with no zsync channel, `dropin track <name> -
 
 ## Install
 
+Prebuilt tarballs for x86_64 and aarch64 are attached to each
+[GitHub release](https://github.com/nordicnode/dropin/releases). Each tarball
+contains the `dropin` binary and a rootless `install.sh`.
+
+Or build from source:
+
 ```sh
 cargo install --git https://github.com/nordicnode/dropin dropin-cli
 ```
@@ -114,10 +120,12 @@ dropin doctor             # health checks: broken menus, orphans, missing tools
 dropin info <file>        # dry run showing exactly what would happen, no changes
 dropin install <file>     # install (shows the plan first; scripts need confirmation)
 dropin install --allow-net <file>  # let a sandboxed script use the internet
+dropin install --system <file>     # real system install via the distro package manager (deb/rpm)
+dropin set-runner <name> wine|proton  # switch a Windows app between Wine and GE-Proton
 dropin set-env <name> <key> <value>    # set an env var used when launching
 dropin unset-env <name> <key>          # remove an env var
 dropin export <file>      # back up the app list to JSON
-dropin import <file>      # review an exported app list
+dropin import <file>      # re-install apps whose source files still exist
 dropin setup-wine         # install Wine automatically for Windows apps
 dropin setup-proton       # install umu-launcher + GE-Proton automatically for games
 dropin adopt <dir>        # add an already-installed game folder (Lutris-style)

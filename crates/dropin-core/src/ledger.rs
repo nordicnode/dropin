@@ -204,10 +204,13 @@ impl Ledger {
 
     /// Set per-app environment variables (JSON object string).
     pub fn set_env_vars(&self, name: &str, json: &str) -> Result<()> {
-        self.conn.execute(
+        let changed = self.conn.execute(
             "UPDATE installs SET env_vars = ?1 WHERE name = ?2",
             params![json, name],
         )?;
+        if changed == 0 {
+            return Err(crate::Error::NotInstalled(name.to_string()));
+        }
         Ok(())
     }
 

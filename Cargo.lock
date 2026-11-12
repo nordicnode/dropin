@@ -736,16 +736,17 @@ dependencies = [
 
 [[package]]
 name = "dropin-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clap",
  "dropin-core",
+ "libc",
  "serde_json",
 ]
 
 [[package]]
 name = "dropin-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "backhand",
  "bzip2 0.4.4",

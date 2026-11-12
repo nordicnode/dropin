@@ -181,12 +181,21 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         .find(|m| m.name.starts_with("data.tar"))
         .ok_or_else(|| Error::Unsupported("no data.tar.* in deb".into()))?;
     let tmp = ar_extract_member(src, data_member)?;
-    // Safety: list first, reject escapes.
-    let listing = super::tarball::list_members_tar(&tmp)?;
-    for line in &listing {
-        assert_safe_member(line.trim_start_matches("./"))?;
+    // Safety: list first, reject escapes. Clean up the temp member on any
+    // early return so a rejected archive leaves nothing behind.
+    let prep = (|| -> Result<()> {
+        let listing = super::tarball::list_members_tar(&tmp)?;
+        for line in &listing {
+            assert_safe_member(line.trim_start_matches("./"))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = prep {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
     std::fs::create_dir_all(&root)?;
+    let mut guard = super::RootGuard::new(root.clone());
     let extract_result = super::tarball::extract_tar(&tmp, &root, 0);
     let _ = std::fs::remove_file(&tmp);
     if let Err(e) = extract_result {
@@ -257,6 +266,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     }
 
     let _ = sha256_of(src).ok();
+    guard.disarm();
     Ok(InstallOutcome {
         name: pkg,
         version: deb_control_field(src, "Version"),
@@ -279,16 +289,11 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         || os_release.contains("\nID=ubuntu")
     {
         (super::escalate(), vec!["apt", "install", "-y", s])
-    } else if os_release.contains("fedora")
-        || os_release.contains("rhel")
-        || os_release.contains("ID_LIKE=\"rhel")
-    {
-        (super::escalate(), vec!["dnf", "install", "-y", s])
-    } else if os_release.contains("arch") {
-        (super::escalate(), vec!["pacman", "-U", "--noconfirm", s])
     } else {
         return Err(Error::Refused(
-            "no supported system package manager detected for --system install".into(),
+            "--system install of a .deb is only supported on Debian-based distros; \
+             the default rootless install works everywhere"
+                .into(),
         ));
     };
     let status = std::process::Command::new(cmd)
@@ -299,12 +304,14 @@ fn install_system(src: &Path) -> Result<InstallOutcome> {
         return Err(Error::Command("system package install failed".into()));
     }
     let pkg = package_name(src);
+    // Keep the real package name (dots/plus signs intact) for removal.
+    let real_name = deb_control_field(src, "Package").unwrap_or_else(|| pkg.clone());
     Ok(InstallOutcome {
         name: pkg,
         version: None,
         install_root: None,
         paths: vec![],
         external: true, // the system package manager owns these files now
-        update_info: None,
+        update_info: Some(real_name),
     })
 }

@@ -17,6 +17,32 @@ impl Drop for TempDirGuard {
     }
 }
 
+/// Human-readable format label, including the specific archive type
+/// (e.g. "tar.gz archive" rather than just "compressed archive").
+pub fn format_label(d: &detect::Detection, src: &Path) -> String {
+    let base = d.format.label();
+    if matches!(d.format, Format::Tarball | Format::Zip) {
+        let fname = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if fname.ends_with(".tar.gz") {
+            "tar.gz archive".into()
+        } else if fname.ends_with(".tar.bz2") {
+            "tar.bz2 archive".into()
+        } else if fname.ends_with(".tar.xz") {
+            "tar.xz archive".into()
+        } else if fname.ends_with(".tar.zst") {
+            "tar.zst archive".into()
+        } else if fname.ends_with(".tar") {
+            "tar archive".into()
+        } else if let Some(ext) = src.extension().and_then(|e| e.to_str()) {
+            format!("{ext} archive")
+        } else {
+            base.to_string()
+        }
+    } else {
+        base.to_string()
+    }
+}
+
 pub fn plan_for(src: &Path) -> Result<InstallPlan> {
     let d = detect::detect(src)?;
     match d.format {
@@ -82,29 +108,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     let ledger = Ledger::open()?;
     ledger.record(&crate::ledger::NewInstall {
         name: outcome.name.clone(),
-        format: {
-            // For archives, include the specific file type (e.g., "tar.gz" not just "compressed archive").
-            let base = d.format.label();
-            if matches!(d.format, Format::Tarball | Format::Zip) {
-                if let Some(ext) = src.extension().and_then(|e| e.to_str()) {
-                    // Handle compound extensions like .tar.gz
-                    let fname = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if fname.ends_with(".tar.gz") {
-                        "tar.gz archive".to_string()
-                    } else if fname.ends_with(".tar.bz2") {
-                        "tar.bz2 archive".to_string()
-                    } else if fname.ends_with(".tar.xz") {
-                        "tar.xz archive".to_string()
-                    } else {
-                        format!("{ext} archive")
-                    }
-                } else {
-                    base.to_string()
-                }
-            } else {
-                base.to_string()
-            }
-        },
+        format: format_label(&d, src),
         version: outcome.version.clone(),
         source_path: src.to_path_buf(),
         source_sha256: sha256,
@@ -151,13 +155,17 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
         } else if inst.format == "installer script" {
             // Script installs are fully reversible: undo deletes what the
             // installer added and restores what it changed or deleted.
-            match handlers::script::undo_install(&slug) {
+            let m = match handlers::script::undo_install(&slug) {
                 Ok(m) => m,
                 Err(e) => format!(
                     "Removed '{}' from the list, but couldn't undo everything: {e}",
                     inst.name
                 ),
+            };
+            if purge {
+                purge_leftovers(&ledger, &inst, &slug)?;
             }
+            m
         } else if inst.format == "adopted" || (inst.external && inst.format == "Windows executable")
         {
             // Adopted games: delete dropin's own files (.desktop, bin symlink,
@@ -187,8 +195,10 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
             )
         } else if inst.format.contains("Debian") || inst.format.contains("RPM") {
             // Installed with --system: the package manager owns the files,
-            // so remove it through the same package manager.
-            match handlers::remove_system_package(&inst.name) {
+            // so remove it through the same package manager. Prefer the real
+            // package name stored at install time over the slug.
+            let pkg = inst.update_info.as_deref().unwrap_or(&inst.name);
+            match handlers::remove_system_package(pkg) {
                 Ok(m) => m,
                 Err(e) => format!(
                     "Removed '{}' from the list, but the system package could not be removed: {e}",
@@ -217,33 +227,40 @@ pub fn remove(name: &str, purge: bool) -> Result<String> {
         }
     }
 
-    if purge && !inst.external {
-        let remaining: Vec<crate::ledger::Install> = ledger
-            .list()?
-            .into_iter()
-            .filter(|i| i.name != slug)
-            .collect();
-        if crate::health::name_still_provided(&remaining, &inst) {
-            println!(
-                "note: skipping leftover purge — '{}' is still provided by another install or system package",
-                inst.name
-            );
-        } else {
-            let leftovers = crate::cleanup::find_leftovers(&inst);
-            if leftovers.is_empty() {
-                println!("no leftover config/cache/data dirs found");
-            } else {
-                let trashed = crate::cleanup::trash_leftovers(&leftovers)?;
-                println!("moved {} leftover dir(s) to the trash:", trashed.len());
-                for l in &leftovers {
-                    println!("  {}", l.what);
-                }
-            }
-        }
+    if purge {
+        purge_leftovers(&ledger, &inst, &slug)?;
     }
 
     ledger.forget(&slug)?;
     Ok(format!("Removed '{}'.", inst.name))
+}
+
+/// Move leftover config/cache/data dirs to the trash, unless the app is still
+/// provided by another install or a system package.
+fn purge_leftovers(ledger: &Ledger, inst: &crate::ledger::Install, slug: &str) -> Result<()> {
+    let remaining: Vec<crate::ledger::Install> = ledger
+        .list()?
+        .into_iter()
+        .filter(|i| i.name != slug)
+        .collect();
+    if crate::health::name_still_provided(&remaining, inst) {
+        println!(
+            "note: skipping leftover purge — '{}' is still provided by another install or system package",
+            inst.name
+        );
+        return Ok(());
+    }
+    let leftovers = crate::cleanup::find_leftovers(inst);
+    if leftovers.is_empty() {
+        println!("no leftover config/cache/data dirs found");
+    } else {
+        let trashed = crate::cleanup::trash_leftovers(&leftovers)?;
+        println!("moved {} leftover dir(s) to the trash:", trashed.len());
+        for l in &leftovers {
+            println!("  {}", l.what);
+        }
+    }
+    Ok(())
 }
 
 pub fn list() -> Result<Vec<crate::ledger::Install>> {
@@ -282,24 +299,27 @@ pub fn launch(name: &str) -> Result<String> {
     let inst = ledger.get(&slug)?;
     let dirs = UserDirs::new();
 
-    // Find the executable: prefer the desktop entry's Exec line.
-    let desktop = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
+    // Find the executable: prefer a managed desktop entry's Exec line.
+    // The entry is not always named dropin-<slug>.desktop (a .deb can ship
+    // several, e.g. debian-xterm.desktop), so look at the tracked files.
     let mut exe: Option<PathBuf> = None;
     let mut args: Vec<String> = Vec::new();
-    if let Ok(text) = std::fs::read_to_string(&desktop) {
-        for line in text.lines() {
-            if let Some(rest) = line.strip_prefix("Exec=") {
-                let parts = split_exec(rest);
-                if !parts.is_empty() {
-                    // Skip field codes (%f, %F, %u, %U, etc.).
-                    let clean: Vec<String> =
-                        parts.into_iter().filter(|p| !p.starts_with('%')).collect();
-                    if let Some(e) = clean.first() {
-                        exe = Some(PathBuf::from(e));
-                        args = clean[1..].to_vec();
+    if let Some(desktop) = find_managed_desktop(&inst, &dirs, &slug) {
+        if let Ok(text) = std::fs::read_to_string(&desktop) {
+            for line in text.lines() {
+                if let Some(rest) = line.strip_prefix("Exec=") {
+                    let parts = split_exec(rest);
+                    if !parts.is_empty() {
+                        // Skip field codes (%f, %F, %u, %U, etc.).
+                        let clean: Vec<String> =
+                            parts.into_iter().filter(|p| !p.starts_with('%')).collect();
+                        if let Some(e) = clean.first() {
+                            exe = Some(PathBuf::from(e));
+                            args = clean[1..].to_vec();
+                        }
                     }
+                    break;
                 }
-                break;
             }
         }
     }
@@ -309,14 +329,29 @@ pub fn launch(name: &str) -> Result<String> {
     if let Some(e) = exe.take() {
         exe = resolve_command(&e, &dirs.bin);
     }
-    // Fallback: find an executable in the tracked files.
+    // Fallback: find an executable in the tracked files, preferring one
+    // whose name matches the app (a .deb can ship several helpers).
     if exe.is_none() {
-        exe = inst.files.iter().map(PathBuf::from).find(|p| {
-            p.is_file()
-                && std::fs::metadata(p)
-                    .map(|m| m.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
+        let mut executables: Vec<PathBuf> = inst
+            .files
+            .iter()
+            .map(PathBuf::from)
+            .filter(|p| {
+                p.is_file()
+                    && std::fs::metadata(p)
+                        .map(|m| m.permissions().mode() & 0o111 != 0)
+                        .unwrap_or(false)
+            })
+            .collect();
+        executables.sort_by_key(|p| {
+            let stem = p
+                .file_stem()
+                .map(|s| slugify(&s.to_string_lossy()))
+                .unwrap_or_default();
+            let name_match = stem == slug || slug.contains(&stem) || stem.contains(&slug);
+            (!name_match, p.components().count())
         });
+        exe = executables.into_iter().next();
     }
     // Fallback for AppImages: the active symlink.
     if exe.is_none() && inst.format == "AppImage" {
@@ -404,6 +439,65 @@ pub fn launch(name: &str) -> Result<String> {
         }
     }
     Ok(format!("Launched '{name}'."))
+}
+
+/// Find the managed desktop entry for an install. Prefers an entry whose
+/// filename or `Name=` matches the app, then the conventional
+/// `dropin-<slug>.desktop`, then any tracked entry.
+fn find_managed_desktop(
+    inst: &crate::ledger::Install,
+    dirs: &UserDirs,
+    slug: &str,
+) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = inst
+        .files
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| {
+            p.starts_with(&dirs.desktop_entries)
+                && p.extension().map(|e| e == "desktop").unwrap_or(false)
+        })
+        .collect();
+    if candidates.is_empty() {
+        let conventional = dirs.desktop_entries.join(format!("dropin-{slug}.desktop"));
+        return conventional.exists().then_some(conventional);
+    }
+    candidates.sort_by_key(|p| (desktop_match_score(p, slug), p.components().count()));
+    candidates.into_iter().next()
+}
+
+/// Lower is better: 0 = the entry's Exec binary or Name matches the app,
+/// 1 = a partial name match, 2 = unrelated.
+fn desktop_match_score(path: &Path, slug: &str) -> u8 {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return 2,
+    };
+    let mut exec_stem = String::new();
+    let mut display = String::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("Exec=") {
+            if let Some(first) = split_exec(rest).first() {
+                exec_stem = Path::new(first)
+                    .file_stem()
+                    .map(|s| slugify(&s.to_string_lossy()))
+                    .unwrap_or_default();
+            }
+        } else if let Some(rest) = line.strip_prefix("Name=") {
+            display = slugify(rest.trim());
+        }
+    }
+    if exec_stem == slug || display == slug {
+        0
+    } else if exec_stem.contains(slug)
+        || slug.contains(&exec_stem)
+        || display.contains(slug)
+        || slug.contains(&display)
+    {
+        1
+    } else {
+        2
+    }
 }
 
 /// Resolve a command from a desktop entry to a real path.
@@ -973,7 +1067,7 @@ fn update_github(inst: &crate::ledger::Install, repo: &str) -> UpdateReport {
         };
     }
 
-    let asset = match crate::github::pick_appimage_asset(&release) {
+    let asset = match crate::github::pick_appimage_asset_for(&release, &inst.name) {
         Some(a) => a.clone(),
         None => {
             return UpdateReport {
@@ -1324,6 +1418,48 @@ pub fn doctor() -> Vec<(String, bool, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_prefers_desktop_entry_matching_the_app() {
+        let d = crate::unique_temp_dir("dropin-launch-desktop");
+        let home = d.join("home");
+        crate::test_env::with_home(&home, || {
+            let dirs = UserDirs::new();
+            dirs.ensure().unwrap();
+            let xterm = dirs.desktop_entries.join("dropin-debian-xterm.desktop");
+            let uxterm = dirs.desktop_entries.join("dropin-debian-uxterm.desktop");
+            std::fs::write(
+                &xterm,
+                "[Desktop Entry]\nName=XTerm\nExec=/opt/xterm/usr/bin/xterm\n",
+            )
+            .unwrap();
+            std::fs::write(
+                &uxterm,
+                "[Desktop Entry]\nName=UXTerm\nExec=/opt/xterm/usr/bin/uxterm\n",
+            )
+            .unwrap();
+            let inst = crate::ledger::Install {
+                id: 1,
+                name: "xterm".into(),
+                format: "Debian package (.deb)".into(),
+                version: None,
+                source_path: "/tmp/xterm.deb".into(),
+                source_sha256: None,
+                install_root: None,
+                external: false,
+                update_info: None,
+                verified: false,
+                github_repo: None,
+                signing_key: None,
+                env_vars: None,
+                created_at: String::new(),
+                files: vec![uxterm.display().to_string(), xterm.display().to_string()],
+            };
+            let found = find_managed_desktop(&inst, &dirs, "xterm").unwrap();
+            assert_eq!(found, xterm, "picked the xterm entry, not uxterm");
+        });
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn rollback_flips_active_to_previous_generation() {

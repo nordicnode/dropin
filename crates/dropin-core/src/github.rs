@@ -176,16 +176,24 @@ fn parse_release(body: &str) -> Result<Release> {
 
 /// Pick the AppImage asset for this machine.
 ///
-/// Skips signatures, checksums, and zsync files. Prefers an asset naming
-/// the local architecture; falls back to the first bare `.AppImage`.
+/// Skips signatures, checksums, and zsync files. Prefers an asset whose name
+/// matches the app, then one naming the local architecture; falls back to the
+/// first bare `.AppImage`.
 pub fn pick_appimage_asset(release: &Release) -> Option<&Asset> {
+    pick_appimage_asset_for(release, "")
+}
+
+/// Like [`pick_appimage_asset`], but prefers assets whose name matches
+/// `app_name` and avoids obvious non-payloads (obsolete/debug/symbols).
+pub fn pick_appimage_asset_for<'a>(release: &'a Release, app_name: &str) -> Option<&'a Asset> {
     let arch = std::env::consts::ARCH; // "x86_64", "aarch64", ...
     let aliases: &[&str] = match arch {
         "x86_64" => &["x86_64", "amd64"],
         "aarch64" => &["aarch64", "arm64"],
         other => &[other],
     };
-    let mut fallback = None;
+    let slug = crate::slugify(app_name);
+    let mut best: Option<(i32, &Asset)> = None;
     for a in &release.assets {
         let lower = a.name.to_lowercase();
         if !lower.ends_with(".appimage") {
@@ -200,14 +208,25 @@ pub fn pick_appimage_asset(release: &Release) -> Option<&Asset> {
         {
             continue;
         }
-        if aliases.iter().any(|al| lower.contains(al)) {
-            return Some(a);
+        let mut score = 0;
+        if !slug.is_empty() && lower.contains(&slug) {
+            score += 100;
         }
-        if fallback.is_none() {
-            fallback = Some(a);
+        if aliases.iter().any(|al| lower.contains(al)) {
+            score += 10;
+        }
+        // Penalize assets that are clearly not the main payload.
+        for bad in ["obsolete", "debug", "symbols", "dbg", "test"] {
+            if lower.contains(bad) {
+                score -= 50;
+            }
+        }
+        match best {
+            Some((s, _)) if s >= score => {}
+            _ => best = Some((score, a)),
         }
     }
-    fallback
+    best.map(|(_, a)| a)
 }
 
 /// Compare two version strings, tolerating `v` prefixes, dates, and
@@ -320,6 +339,28 @@ mod tests {
             // Non-x86_64 test machines take the arch match or the fallback.
             assert!(a.name.ends_with(".AppImage"));
         }
+    }
+
+    #[test]
+    fn prefers_asset_matching_the_app_name() {
+        let r = Release {
+            tag: "v1".into(),
+            name: "".into(),
+            assets: vec![
+                Asset {
+                    name: "obsolete-appimagetool-x86_64.AppImage".into(),
+                    download_url: "u1".into(),
+                    size: 1,
+                },
+                Asset {
+                    name: "appimagetool-x86_64.AppImage".into(),
+                    download_url: "u2".into(),
+                    size: 2,
+                },
+            ],
+        };
+        let a = pick_appimage_asset_for(&r, "appimagetool").unwrap();
+        assert_eq!(a.name, "appimagetool-x86_64.AppImage");
     }
 
     #[test]

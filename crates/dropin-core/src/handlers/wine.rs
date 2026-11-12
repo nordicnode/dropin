@@ -144,6 +144,9 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
         }
     }
 
+    // If anything below fails, remove the half-created prefix.
+    let mut guard = super::RootGuard::new(prefix.clone());
+
     // Copy the installer into the prefix so it stays with the app.
     let file_name = src
         .file_name()
@@ -250,6 +253,7 @@ pub fn install(src: &Path, opts: &InstallOptions) -> Result<InstallOutcome> {
     // Record the runner in the ledger via env_vars (so launch uses it).
     // The launch function will check for a saved runner preference.
 
+    guard.disarm();
     Ok(InstallOutcome {
         name: slug.clone(),
         version: None,

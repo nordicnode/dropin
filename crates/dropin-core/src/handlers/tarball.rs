@@ -344,9 +344,27 @@ struct Sniff {
 /// Value: (temp dir, insertion time).
 type CacheKey = (PathBuf, u64, u64);
 type CacheVal = (PathBuf, std::time::Instant);
-static EXTRACTION_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<CacheKey, CacheVal>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// The cache owns the extracted temp dirs, so dropping it (at process exit)
+/// removes them. Without this, `dropin info` would leak a temp dir per run.
+struct ExtractionCache {
+    map: std::collections::HashMap<CacheKey, CacheVal>,
+}
+
+impl Drop for ExtractionCache {
+    fn drop(&mut self) {
+        for (dir, _) in self.map.values() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+static EXTRACTION_CACHE: std::sync::LazyLock<std::sync::Mutex<ExtractionCache>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(ExtractionCache {
+            map: std::collections::HashMap::new(),
+        })
+    });
 
 /// Max cached extractions; evict oldest beyond this.
 const CACHE_LIMIT: usize = 8;
@@ -361,37 +379,41 @@ fn cache_insert(id: (PathBuf, u64, u64), dir: PathBuf) {
     };
     let now = std::time::Instant::now();
     // Evict expired.
-    cache.retain(|_, (_, t)| now.duration_since(*t) < CACHE_TTL);
+    cache
+        .map
+        .retain(|_, (_, t)| now.duration_since(*t) < CACHE_TTL);
     // Evict oldest if over limit.
-    while cache.len() >= CACHE_LIMIT {
+    while cache.map.len() >= CACHE_LIMIT {
         if let Some(oldest) = cache
+            .map
             .iter()
             .min_by_key(|(_, (_, t))| *t)
             .map(|(k, _)| k.clone())
         {
-            if let Some((dir, _)) = cache.remove(&oldest) {
+            if let Some((dir, _)) = cache.map.remove(&oldest) {
                 let _ = std::fs::remove_dir_all(&dir);
             }
         } else {
             break;
         }
     }
-    cache.insert(id, (dir, now));
+    cache.map.insert(id, (dir, now));
 }
 
 /// Take a cached extraction (removing it from the cache).
 fn cache_take(id: &(PathBuf, u64, u64)) -> Option<PathBuf> {
     let mut cache = EXTRACTION_CACHE.lock().ok()?;
-    let (dir, _) = cache.remove(id)?;
+    let (dir, _) = cache.map.remove(id)?;
     // Clean up expired entries opportunistically.
     let now = std::time::Instant::now();
     let stale: Vec<_> = cache
+        .map
         .iter()
         .filter(|(_, (_, t))| now.duration_since(*t) >= CACHE_TTL)
         .map(|(k, _)| k.clone())
         .collect();
     for k in stale {
-        if let Some((d, _)) = cache.remove(&k) {
+        if let Some((d, _)) = cache.map.remove(&k) {
             let _ = std::fs::remove_dir_all(&d);
         }
     }

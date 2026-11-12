@@ -1,6 +1,6 @@
 [package]
 name = "dropin-core"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 
 [dependencies]
@@ -23,4 +23,4 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2",
 tar = { version = "0.4", default-features = false }
 bzip2 = "0.4"
 zstd = "0.13"
-liblzma = "0.4"
+liblzma = { version = "0.4", default-features = false, features = ["static"] }
