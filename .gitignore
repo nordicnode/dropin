@@ -2,4 +2,6 @@ target/
 # Release artifacts are built by .github/workflows/release.yml and attached
 # to GitHub Releases; they do not belong in git.
 release/*.tar.gz
+release/*.sha256
+release/SHA256SUMS
 release/dropin-v*/
