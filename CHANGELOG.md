@@ -68,6 +68,10 @@ All notable changes to dropin are documented here. The format follows
   without needing real Wine or a GPU.
 - Added tests for Wine executable selection, runner choice, the umu GAMEID
   disk cache, HTTP body caps, and the process timeout helper.
+- zsync control files now have a hard block-count cap (4M) and block-size
+  cap (16 MiB), so a hostile `Length:`/`Blocksize:` line can't force a huge
+  allocation. Added a deterministic fuzz test that feeds random bytes to
+  both parsers and asserts they never panic.
 - `DROPIN_UMU_OFFLINE=1` skips the umu-database lookup for fully offline
   installs.
 

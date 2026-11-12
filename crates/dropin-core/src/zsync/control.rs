@@ -32,6 +32,15 @@ use crate::{Error, Result};
 /// multi-gigabyte AppImages while refusing absurd allocations.
 const CONTROL_MAX: usize = 16 * 1024 * 1024;
 
+/// Hard cap on the number of blocks a control file may describe. At the
+/// default 2048-byte block size this covers 8 GiB; it exists so a hostile
+/// `Length:` line can't force a huge allocation even if the table is short.
+const MAX_BLOCKS: u64 = 4_000_000;
+
+/// Hard cap on the block size. Real zsync files use 2-64 KiB; a hostile
+/// `Blocksize:` line must not make the scanner allocate gigabytes.
+const MAX_BLOCKSIZE: u64 = 16 * 1024 * 1024;
+
 /// How many bytes of the header a "does an update exist" check fetches.
 /// Real headers are a few hundred bytes; anything past this is block table.
 pub const HEADER_REQUEST: usize = 8 * 1024;
@@ -226,7 +235,7 @@ pub fn parse_header(bytes: &[u8]) -> std::result::Result<Header, String> {
                 let size = value
                     .parse::<u64>()
                     .map_err(|_| format!("{value:?} is not a block size"))?;
-                if size == 0 || !size.is_power_of_two() {
+                if size == 0 || !size.is_power_of_two() || size > MAX_BLOCKSIZE {
                     return Err(format!("{size} is not a usable block size"));
                 }
                 header.blocksize = Some(size);
@@ -255,6 +264,11 @@ pub fn parse_control(bytes: &[u8]) -> std::result::Result<ControlFile, String> {
     let hash_lengths = header.hash_lengths;
     let entry_size = hash_lengths.entry_size();
     let count = header.length.div_ceil(blocksize);
+    if count > MAX_BLOCKS {
+        return Err(format!(
+            "control file describes {count} blocks, more than the {MAX_BLOCKS} limit"
+        ));
+    }
     // Settle the allocation from the table size before allocating.
     let needed = usize::try_from(count)
         .ok()
@@ -361,6 +375,7 @@ mod tests {
         assert!(parse_header(b"zsync: 0.6.2\nLength: 10").is_err()); // no blank line
         assert!(parse_header(b"zsync: 0.6.2\n\n").is_err()); // no Length
         assert!(parse_header(b"zsync: 0.6.2\nLength: 10\nBlocksize: 1000\n\n").is_err());
+        assert!(parse_header(b"zsync: 0.6.2\nLength: 10\nBlocksize: 1099511627776\n\n").is_err());
         assert!(parse_header(b"zsync: 0.6.2\nLength: 10\nHash-Lengths: 3,2,4\n\n").is_err());
     }
 
@@ -385,6 +400,46 @@ mod tests {
         let mut bytes = header_bytes();
         bytes.extend_from_slice(&[0u8; 6]); // only 1 of 3 blocks
         assert!(parse_control(&bytes).is_err());
+    }
+
+    #[test]
+    fn rejects_absurd_block_count() {
+        let bytes = b"zsync: 0.6.2\nBlocksize: 1\nLength: 18446744073709551615\n\n".to_vec();
+        let err = parse_control(&bytes).unwrap_err();
+        assert!(err.contains("limit"), "{err}");
+    }
+
+    #[test]
+    fn random_inputs_never_panic() {
+        // Deterministic xorshift; no external fuzz dependency.
+        let mut state = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for len in 0..512 {
+            for _ in 0..20 {
+                let mut bytes = vec![0u8; len];
+                for b in &mut bytes {
+                    *b = (next() & 0xff) as u8;
+                }
+                // Neither parser may panic; both must return Ok or Err.
+                let _ = parse_header(&bytes);
+                let _ = parse_control(&bytes);
+            }
+        }
+        // Fuzz the block table behind a valid header.
+        let base = header_bytes();
+        for _ in 0..2000 {
+            let mut bytes = base.clone();
+            let n = (next() % 64) as usize;
+            for _ in 0..n {
+                bytes.push((next() & 0xff) as u8);
+            }
+            let _ = parse_control(&bytes);
+        }
     }
 
     #[test]
