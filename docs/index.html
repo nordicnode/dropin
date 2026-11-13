@@ -6,126 +6,265 @@
 <title>dropin — the universal Linux installer</title>
 <meta name="description" content="dropin installs AppImages, .debs, .rpms, tarballs, Flatpaks, installer scripts and Windows games on Linux. One command, no root, and everything tracked so uninstalls are actually clean.">
 <style>
-  :root { --text: #1a1a1a; --muted: #5c5c5c; --line: #e2e2e2; --accent: #0b5fff; --code-bg: #f4f4f4; }
+  :root {
+    --ink: #131316;
+    --ink-soft: #3d3d44;
+    --muted: #5f5f68;
+    --line: #e6e6e9;
+    --bg: #ffffff;
+    --bg-soft: #f6f6f8;
+    --dark: #101012;
+    --dark-2: #17171a;
+    --green: #00b368;
+    --green-dark: #009656;
+    --green-soft: #e6f7ee;
+    --code-bg: #1b1b1e;
+    --radius: 12px;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--text); line-height: 1.6; font-size: 17px; }
-  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
-  header { border-bottom: 1px solid var(--line); padding-bottom: 32px; margin-bottom: 32px; }
-  header img { width: 180px; height: auto; display: block; margin-bottom: 16px; }
-  h1 { font-size: 2.4em; line-height: 1.1; margin: 0 0 8px; letter-spacing: -0.02em; }
-  .tagline { font-size: 1.25em; margin: 0 0 16px; }
-  .lede { color: var(--muted); margin: 0 0 20px; max-width: 60ch; }
-  .links a { margin-right: 16px; }
-  a { color: var(--accent); text-decoration: none; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); line-height: 1.6; font-size: 17px; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  a { color: var(--green-dark); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  h2 { font-size: 1.35em; margin: 40px 0 12px; letter-spacing: -0.01em; }
-  p { margin: 0 0 16px; }
-  ul { margin: 0 0 16px; padding-left: 22px; }
-  li { margin-bottom: 6px; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 2px 5px; border-radius: 4px; }
-  pre { background: var(--code-bg); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.86em; line-height: 1.55; }
-  pre code { background: none; padding: 0; }
-  table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 0.95em; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { font-weight: 600; }
-  figure { margin: 0 0 16px; }
-  figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; }
-  figcaption { color: var(--muted); font-size: 0.85em; margin-top: 8px; }
-  footer { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 20px; color: var(--muted); font-size: 0.9em; }
-  footer p { margin: 0 0 8px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.86em; }
+  p code, li code, td code { background: var(--bg-soft); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 24px; }
+  .measure { max-width: 680px; }
+
+  /* Nav */
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  nav img { height: 30px; width: auto; display: block; border-radius: 6px; }
+  nav .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 0.92em; }
+  nav .nav-links a { color: var(--ink-soft); }
+  nav .nav-links a:hover { color: var(--ink); text-decoration: none; }
+  nav .nav-cta { font-size: 0.92em; font-weight: 600; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
+  nav .nav-cta:hover { border-color: var(--ink); text-decoration: none; }
+  @media (max-width: 640px) { nav .nav-links { display: none; } }
+
+  /* Hero */
+  .hero { background: var(--dark); color: #fff; padding: 84px 0 72px; }
+  .hero .eyebrow { color: var(--green); font-size: 0.82em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 18px; }
+  .hero h1 { font-size: clamp(2.2em, 5.4vw, 3.4em); line-height: 1.08; letter-spacing: -0.03em; margin: 0 0 20px; max-width: 16ch; }
+  .hero h1 em { font-style: normal; color: var(--green); }
+  .hero .lede { color: #b9b9c0; font-size: 1.12em; max-width: 58ch; margin: 0 0 32px; }
+  .hero .lede strong { color: #fff; font-weight: 600; }
+  .install-box { background: var(--dark-2); border: 1px solid #2a2a2e; border-radius: var(--radius); padding: 18px 20px; max-width: 640px; margin: 0 0 20px; }
+  .install-box .label { color: #8a8a93; font-size: 0.78em; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px; }
+  .install-box pre { margin: 0; background: none; padding: 0; color: #e8e8ea; font-size: 0.95em; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .install-box pre .prompt { color: var(--green); }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 28px; }
+  .btn { display: inline-block; font-weight: 600; font-size: 0.95em; border-radius: 9px; padding: 11px 20px; }
+  .btn:hover { text-decoration: none; }
+  .btn-primary { background: var(--green); color: #04120a; }
+  .btn-primary:hover { background: #00c474; }
+  .btn-ghost { border: 1px solid #3a3a3f; color: #fff; }
+  .btn-ghost:hover { border-color: #fff; }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: #8a8a93; font-size: 0.88em; margin: 0; }
+  .hero-meta span::before { content: "✓ "; color: var(--green); }
+
+  /* Sections */
+  section { padding: 72px 0; }
+  section + section { border-top: 1px solid var(--line); }
+  section.tinted { background: var(--bg-soft); }
+  .eyebrow { color: var(--green-dark); font-size: 0.8em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 10px; }
+  h2 { font-size: clamp(1.5em, 3vw, 1.9em); line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 12px; }
+  .section-intro { color: var(--muted); max-width: 62ch; margin: 0 0 32px; }
+  h3 { font-size: 1.08em; margin: 0 0 6px; }
+
+  /* Formats table */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.95em; min-width: 620px; }
+  th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child th, tr:last-child td { border-bottom: none; }
+  th { font-size: 0.82em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); background: var(--bg-soft); }
+  tbody tr:hover { background: #fafafb; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  .callout { margin-top: 20px; background: var(--green-soft); border: 1px solid #bfe8d2; border-radius: var(--radius); padding: 16px 20px; font-size: 0.95em; }
+  .callout strong { color: #005c36; }
+
+  /* Window-framed screenshot */
+  .window { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: 0 12px 32px rgba(0,0,0,0.10); background: var(--dark); }
+  .window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 16px; background: var(--dark-2); }
+  .window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3a3f; display: block; }
+  .window-bar span { color: #8a8a93; font-size: 0.82em; margin-left: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .window img { width: 100%; height: auto; display: block; }
+  figure { margin: 0; }
+  figcaption { color: var(--muted); font-size: 0.88em; margin-top: 14px; }
+
+  /* Feature grid */
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; background: #fff; }
+  .card .num { display: inline-block; font-size: 0.8em; font-weight: 700; color: var(--green-dark); background: var(--green-soft); border-radius: 6px; padding: 3px 8px; margin-bottom: 12px; }
+  .card p { margin: 0; color: var(--muted); font-size: 0.95em; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; gap: 24px; } }
+  .split p { color: var(--muted); }
+  .split p strong { color: var(--ink); }
+
+  /* Terminal blocks */
+  pre.term { background: var(--code-bg); color: #e8e8ea; padding: 20px 22px; border-radius: var(--radius); overflow-x: auto; font-size: 0.88em; line-height: 1.6; margin: 0; }
+  pre.term .prompt { color: var(--green); }
+  pre.term .comment { color: #8a8a93; }
+
+  /* Principles */
+  .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .principles { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .principles { grid-template-columns: 1fr; } }
+  .principles .card h3 { font-size: 1em; }
+  .principles .card p { font-size: 0.92em; }
+
+  /* Footer */
+  footer { background: var(--dark); color: #b9b9c0; padding: 48px 0; font-size: 0.92em; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: baseline; justify-content: space-between; }
+  footer a { color: #fff; }
+  footer .fine { color: #8a8a93; }
 </style>
 </head>
 <body>
-<main>
-<header>
-  <img src="assets/logo-v3.webp" alt="dropin logo" width="180">
-  <h1>dropin</h1>
-  <p class="tagline">Point it at a file. It&rsquo;s installed.</p>
-  <p class="lede">The universal Linux installer for all the weird files the internet hands you. AppImages, <code>.deb</code>s, <code>.rpm</code>s, tarballs, Flatpaks, installer scripts, Windows games. One command, no root, and everything tracked so uninstalls are actually clean.</p>
-  <p class="links">
-    <a href="https://github.com/nordicnode/dropin">Source on GitHub</a>
-    <a href="https://github.com/nordicnode/dropin/releases">Releases</a>
-    <a href="https://github.com/nordicnode/dropin/issues">Issues</a>
-  </p>
+
+<nav>
+  <div class="wrap">
+    <a href="#top" aria-label="dropin home"><img src="assets/logo-v3.webp" alt="dropin logo" height="30"></a>
+    <div class="nav-links">
+      <a href="#formats">Formats</a>
+      <a href="#uninstall">Uninstalls</a>
+      <a href="#scripts">Scripts</a>
+      <a href="#usage">Usage</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/nordicnode/dropin">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <p class="eyebrow">Linux installer &middot; Rust &middot; MIT</p>
+    <h1>Point it at a file. <em>It&rsquo;s installed.</em></h1>
+    <p class="lede">dropin installs AppImages, <code style="background:#242428;border-color:#333338;color:#fff;">.deb</code>s, <code style="background:#242428;border-color:#333338;color:#fff;">.rpm</code>s, tarballs, Flatpaks, installer scripts and Windows games. <strong>One command, no root</strong>, and everything tracked so uninstalls are actually clean.</p>
+    <div class="install-box">
+      <p class="label">Install &mdash; latest release v0.2.1</p>
+      <pre><span class="prompt">$</span> cargo install --git https://github.com/nordicnode/dropin dropin-cli</pre>
+    </div>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="https://github.com/nordicnode/dropin/releases/latest">Download v0.2.1</a>
+      <a class="btn btn-ghost" href="https://github.com/nordicnode/dropin">View source on GitHub</a>
+    </div>
+    <p class="hero-meta"><span>Command-line tool</span><span>No root required</span><span>No account</span><span>No telemetry</span></p>
+  </div>
 </header>
 
-<h2>Install</h2>
-<p>Latest release: <a href="https://github.com/nordicnode/dropin/releases/latest">v0.2.1</a>. Prebuilt tarballs are attached to each GitHub release. Each tarball contains the <code>dropin</code> binary and a rootless <code>install.sh</code>.</p>
-<p>Or build from source:</p>
-<pre><code>cargo install --git https://github.com/nordicnode/dropin dropin-cli</code></pre>
-<p>dropin is a command-line tool written in Rust, MIT licensed. It needs no root and no account.</p>
+<main>
+<section id="formats">
+  <div class="wrap">
+    <p class="eyebrow">Formats</p>
+    <h2>Whatever the download is, dropin knows what to do with it.</h2>
+    <p class="section-intro">Every format gets the same treatment: install it in user scope, wire up a menu entry and launcher, and record every file it creates so removal is exact.</p>
+    <div class="table-wrap">
+      <table>
+        <tr><th>You downloaded</th><th>What dropin does</th></tr>
+        <tr><td><code>.AppImage</code></td><td>Moves to <code>~/Applications</code>, makes it executable, pulls out the real icon and menu entry</td></tr>
+        <tr><td><code>.deb</code></td><td>Extracts the payload to <code>~/.local/opt/&lt;pkg&gt;</code> with a pure-Rust reader (no <code>dpkg</code> needed), adopts the bundled <code>.desktop</code> files with paths fixed up, links <code>usr/bin/*</code> into <code>~/.local/bin</code></td></tr>
+        <tr><td><code>.rpm</code></td><td>Same treatment through a pure-Rust RPM/cpio reader. Works on Debian too, no <code>rpm2cpio</code> required</td></tr>
+        <tr><td><code>.tar.gz</code> / <code>.tar.xz</code> / <code>.zip</code></td><td>Looks at what&rsquo;s inside. Real app? Installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken &ldquo;install&rdquo;</td></tr>
+        <tr><td><code>.flatpakref</code> / <code>.flatpak</code></td><td>Hands it to <code>flatpak install --user</code></td></tr>
+        <tr><td><code>.sh</code> / <code>.run</code> / <code>.bin</code></td><td>Tells you it&rsquo;s an executable vendor script and won&rsquo;t run it until you explicitly say so</td></tr>
+        <tr><td><code>.exe</code> / <code>.msi</code></td><td>Auto-detects games vs apps. Games run with GE-Proton via umu-launcher. Apps run with Wine. Isolated prefix per app, tracked for clean removal</td></tr>
+      </table>
+    </div>
+    <div class="callout"><strong>Detection goes by magic bytes, not file extensions.</strong> Rename a <code>.deb</code> to <code>.txt</code> and dropin still knows what it&rsquo;s looking at.</div>
+  </div>
+</section>
 
-<h2>What it handles</h2>
-<table>
-  <tr><th>You downloaded</th><th>What dropin does (all in user scope, no root)</th></tr>
-  <tr><td><code>.AppImage</code></td><td>Moves to <code>~/Applications</code>, makes it executable, pulls out the real icon and menu entry</td></tr>
-  <tr><td><code>.deb</code></td><td>Extracts the payload to <code>~/.local/opt/&lt;pkg&gt;</code> with a pure-Rust reader (no <code>dpkg</code> needed), adopts the bundled <code>.desktop</code> files with paths fixed up, links <code>usr/bin/*</code> into <code>~/.local/bin</code></td></tr>
-  <tr><td><code>.rpm</code></td><td>Same treatment through a pure-Rust RPM/cpio reader. Works on Debian too, no <code>rpm2cpio</code> required</td></tr>
-  <tr><td><code>.tar.gz</code> / <code>.tar.xz</code> / <code>.zip</code></td><td>Looks at what&rsquo;s inside. Real app? Installed with a menu entry and bin links. Folder of vacation photos? Refused with an explanation instead of a broken &ldquo;install&rdquo;</td></tr>
-  <tr><td><code>.flatpakref</code> / <code>.flatpak</code></td><td>Hands it to <code>flatpak install --user</code></td></tr>
-  <tr><td><code>.sh</code> / <code>.run</code> / <code>.bin</code></td><td>Tells you it&rsquo;s an executable vendor script and won&rsquo;t run it until you explicitly say so</td></tr>
-  <tr><td><code>.exe</code> / <code>.msi</code></td><td>Auto-detects games vs apps. Games run with GE-Proton via umu-launcher. Apps run with Wine. Isolated prefix per app, tracked for clean removal</td></tr>
-</table>
-<p>Detection goes by magic bytes, not file extensions. Rename a <code>.deb</code> to <code>.txt</code> and dropin still knows what it&rsquo;s looking at.</p>
-
-<figure>
-  <img src="assets/screenshot-terminal-install.png" alt="dropin terminal workflow: info, install, list" width="900" height="460">
-  <figcaption>Dry run, verified install, and the ledger keeping score.</figcaption>
-</figure>
-
-<h2>Uninstalls that actually undo</h2>
-<p>Everything dropin creates &mdash; files, symlinks, menu entries, icons &mdash; is written to a SQLite database at <code>~/.local/share/dropin/ledger.db</code>. Removing an app walks that list backwards and deletes exactly what was installed. Nothing orphaned, nothing guessed at.</p>
-<pre><code>$ dropin install coolapp-2.4-linux-x86_64.tar.gz
+<section id="uninstall" class="tinted">
+  <div class="wrap">
+    <p class="eyebrow">Uninstalls</p>
+    <h2>Uninstalls that actually undo.</h2>
+    <div class="split">
+      <div>
+        <p>Everything dropin creates &mdash; files, symlinks, menu entries, icons &mdash; is written to a SQLite database at <code>~/.local/share/dropin/ledger.db</code>. Removing an app walks that list backwards and deletes exactly what was installed. <strong>Nothing orphaned, nothing guessed at.</strong></p>
+        <p>AppImages get generations on top of that: each version lives in its own directory under <code>~/Applications/&lt;app&gt;/&lt;version&gt;/</code>, with an <code>active</code> symlink pointing at the current one. Updates use a zsync delta where a channel exists, are SHA-1 verified, and <code>dropin rollback</code> flips <code>active</code> back instantly. Only the last two generations are kept.</p>
+      </div>
+      <figure>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span>terminal</span></div>
+          <img src="assets/screenshot-terminal-install.png" alt="dropin terminal workflow: info, install, list" width="900" height="460">
+        </div>
+        <figcaption>Dry run, verified install, and the ledger keeping score.</figcaption>
+      </figure>
+    </div>
+    <div style="margin-top:32px">
+      <pre class="term"><span class="prompt">$</span> dropin install coolapp-2.4-linux-x86_64.tar.gz
 Installed 'coolapp'.
 Remove anytime with: dropin remove coolapp
 
-$ dropin list
-coolapp — tar.gz archive</code></pre>
+<span class="prompt">$</span> dropin list
+coolapp — tar.gz archive</pre>
+    </div>
+  </div>
+</section>
 
-<h2>AppImage updates without fear</h2>
-<p>AppImages live in <code>~/Applications/&lt;app&gt;/&lt;version&gt;/</code>, with an <code>active</code> symlink pointing at the current one. Menu entries point at <code>active</code>, so switching versions never touches your launchers. Updates use a native zsync delta where a channel exists, are SHA-1 verified, and <code>dropin rollback &lt;name&gt;</code> flips <code>active</code> back to the previous version instantly. Only the last two generations are kept.</p>
-<p>For AppImages from GitHub releases with no zsync channel, <code>dropin track &lt;name&gt; --github owner/repo</code> follows the repo instead. If a release ships a detached signature, dropin pins the signing key on first install and refuses updates whose signature is missing, unreadable, or from a different key.</p>
+<section id="scripts">
+  <div class="wrap">
+    <p class="eyebrow">Installer scripts</p>
+    <h2>Vendor scripts get treated like what they are: arbitrary code.</h2>
+    <p class="section-intro"><code>.sh</code>, <code>.run</code> and <code>.bin</code> files can do anything to your machine, so dropin doesn&rsquo;t just run them.</p>
+    <div class="grid">
+      <div class="card"><span class="num">01</span><h3>Audited first</h3><p>Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo.</p></div>
+      <div class="card"><span class="num">02</span><h3>Sandboxed</h3><p>Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn&rsquo;t installed, dropin refuses rather than running unsandboxed.</p></div>
+      <div class="card"><span class="num">03</span><h3>Fully logged</h3><p>Every byte of installer output is logged to <code>~/.local/share/dropin/script-logs/</code>.</p></div>
+      <div class="card"><span class="num">04</span><h3>Reversible</h3><p>Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted.</p></div>
+    </div>
+  </div>
+</section>
 
-<h2>Installer scripts: audited, sandboxed, reversible</h2>
-<ul>
-  <li><strong>Static audit first.</strong> Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo.</li>
-  <li><strong>Sandboxed execution.</strong> Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn&rsquo;t installed, dropin refuses rather than running unsandboxed.</li>
-  <li><strong>Full logging.</strong> Every byte of installer output is logged to <code>~/.local/share/dropin/script-logs/</code>.</li>
-  <li><strong>Complete undo.</strong> Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted.</li>
-</ul>
+<section id="usage">
+  <div class="wrap">
+    <p class="eyebrow">Usage</p>
+    <h2>Everything is one command.</h2>
+    <p class="section-intro">dropin is a command-line tool. No GUI, no background service, no daemon.</p>
+    <pre class="term"><span class="prompt">$</span> dropin install &lt;file&gt;        <span class="comment"># shows the plan first; scripts need confirmation</span>
+<span class="prompt">$</span> dropin info &lt;file&gt;           <span class="comment"># dry run: exactly what would happen, no changes</span>
+<span class="prompt">$</span> dropin list                  <span class="comment"># everything dropin installed</span>
+<span class="prompt">$</span> dropin launch &lt;name&gt;         <span class="comment"># run an installed app</span>
+<span class="prompt">$</span> dropin update [name|--all]   <span class="comment"># check for updates, on demand only</span>
+<span class="prompt">$</span> dropin rollback &lt;name&gt;       <span class="comment"># restore an AppImage to its previous version</span>
+<span class="prompt">$</span> dropin remove &lt;name&gt;         <span class="comment"># clean removal, reversed from the ledger</span>
+<span class="prompt">$</span> dropin remove --purge &lt;name&gt;  <span class="comment"># also move leftover config/cache/data to the trash</span>
+<span class="prompt">$</span> dropin doctor                <span class="comment"># health checks: broken menus, orphans, missing tools</span>
+<span class="prompt">$</span> dropin track &lt;name&gt; --github owner/repo
+<span class="prompt">$</span> dropin adopt &lt;dir&gt;           <span class="comment"># add an already-installed game folder</span>
+<span class="prompt">$</span> dropin setup-wine            <span class="comment"># install Wine automatically for Windows apps</span>
+<span class="prompt">$</span> dropin setup-proton          <span class="comment"># install umu-launcher + GE-Proton for games</span></pre>
+  </div>
+</section>
 
-<h2>Usage</h2>
-<pre><code>dropin list                 # everything dropin installed
-dropin launch &lt;name&gt;        # run an installed app
-dropin update [name|--all]  # check for updates, on demand only
-dropin rollback &lt;name&gt;      # restore an AppImage to its previous version
-dropin track &lt;name&gt; --github owner/repo
-dropin remove &lt;name&gt;        # clean removal, reversed from the ledger
-dropin remove --purge &lt;name&gt; # also move leftover config/cache/data to the trash
-dropin doctor               # health checks: broken menus, orphans, missing tools
-dropin info &lt;file&gt;          # dry run showing exactly what would happen
-dropin install &lt;file&gt;       # install (shows the plan first; scripts need confirmation)
-dropin install --allow-net &lt;file&gt;
-dropin install --system &lt;file&gt;   # real system install via the distro package manager
-dropin set-runner &lt;name&gt; wine|proton
-dropin set-env &lt;name&gt; &lt;key&gt; &lt;value&gt;
-dropin export &lt;file&gt;        # back up the app list to JSON
-dropin import &lt;file&gt;        # re-install apps whose source files still exist
-dropin setup-wine           # install Wine automatically for Windows apps
-dropin setup-proton         # install umu-launcher + GE-Proton for games
-dropin adopt &lt;dir&gt;          # add an already-installed game folder</code></pre>
-
-<h2>Principles</h2>
-<ul>
-  <li><strong>Your home directory is yours.</strong> Installs land in user scope and never ask for root unless you explicitly choose a system install.</li>
-  <li><strong>Show before doing.</strong> <code>dropin info</code> always lays out the plan first. Installer scripts need your explicit okay.</li>
-  <li><strong>Offline by default.</strong> No accounts, no telemetry, no background phoning home. Network access only happens for actions you start.</li>
-  <li><strong>Honest about limits.</strong> If dropin can&rsquo;t update something automatically, it says so instead of pretending.</li>
-</ul>
+<section class="tinted">
+  <div class="wrap">
+    <p class="eyebrow">Principles</p>
+    <h2>Four rules, no exceptions.</h2>
+    <div class="principles" style="margin-top:28px">
+      <div class="card"><h3>Your home is yours</h3><p>Installs land in user scope and never ask for root unless you explicitly choose a system install.</p></div>
+      <div class="card"><h3>Show before doing</h3><p><code>dropin info</code> always lays out the plan first. Installer scripts need your explicit okay.</p></div>
+      <div class="card"><h3>Offline by default</h3><p>No accounts, no telemetry, no background phoning home. Network access only happens for actions you start.</p></div>
+      <div class="card"><h3>Honest about limits</h3><p>If dropin can&rsquo;t update something automatically, it says so instead of pretending.</p></div>
+    </div>
+  </div>
+</section>
+</main>
 
 <footer>
-  <p>dropin is open source under the MIT license. Source, issues and releases live at <a href="https://github.com/nordicnode/dropin">github.com/nordicnode/dropin</a>.</p>
+  <div class="wrap">
+    <div>
+      <p><a href="https://github.com/nordicnode/dropin">github.com/nordicnode/dropin</a></p>
+      <p class="fine">dropin is open source under the MIT license.</p>
+    </div>
+    <div>
+      <p><a href="https://github.com/nordicnode/dropin/releases">Releases</a> &nbsp;&middot;&nbsp; <a href="https://github.com/nordicnode/dropin/issues">Issues</a></p>
+      <p class="fine">Latest release: v0.2.1</p>
+    </div>
+  </div>
 </footer>
-</main>
+
 </body>
 </html>
