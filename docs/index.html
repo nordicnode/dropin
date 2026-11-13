@@ -44,6 +44,13 @@
 
   /* Hero */
   .hero { background: var(--dark); color: #fff; padding: 84px 0 72px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 36px; } }
+  .hero-demo { background: var(--dark-2); border: 1px solid #2a2a2e; border-radius: var(--radius); overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.35); }
+  .hero-demo .window-bar { background: #202023; }
+  .hero-demo pre { margin: 0; padding: 18px 20px; color: #e8e8ea; font-size: 0.88em; line-height: 1.7; overflow-x: auto; }
+  .hero-demo pre .prompt { color: var(--green); }
+  .hero-demo pre .ok { color: var(--green); }
   .hero .eyebrow { color: var(--green); font-size: 0.82em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 18px; }
   .hero h1 { font-size: clamp(2.2em, 5.4vw, 3.4em); line-height: 1.08; letter-spacing: -0.03em; margin: 0 0 20px; max-width: 16ch; }
   .hero h1 em { font-style: normal; color: var(--green); }
@@ -51,7 +58,7 @@
   .hero .lede strong { color: #fff; font-weight: 600; }
   .install-box { background: var(--dark-2); border: 1px solid #2a2a2e; border-radius: var(--radius); padding: 18px 20px; max-width: 640px; margin: 0 0 20px; }
   .install-box .label { color: #8a8a93; font-size: 0.78em; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px; }
-  .install-box pre { margin: 0; background: none; padding: 0; color: #e8e8ea; font-size: 0.95em; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .install-box pre { margin: 0; background: none; padding: 0; color: #e8e8ea; font-size: 0.95em; overflow-x: auto; }
   .install-box pre .prompt { color: var(--green); }
   .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 28px; }
   .btn { display: inline-block; font-weight: 600; font-size: 0.95em; border-radius: 9px; padding: 11px 20px; }
@@ -138,10 +145,11 @@
 </nav>
 
 <header class="hero" id="top">
-  <div class="wrap">
+  <div class="wrap hero-grid">
+    <div>
     <p class="eyebrow">Linux installer &middot; Rust &middot; MIT</p>
     <h1>Point it at a file. <em>It&rsquo;s installed.</em></h1>
-    <p class="lede">dropin installs AppImages, <code style="background:#242428;border-color:#333338;color:#fff;">.deb</code>s, <code style="background:#242428;border-color:#333338;color:#fff;">.rpm</code>s, tarballs, Flatpaks, installer scripts and Windows games. <strong>One command, no root</strong>, and everything tracked so uninstalls are actually clean.</p>
+    <p class="lede">dropin installs AppImages, <code style="background:#242428;border-color:#333338;color:#fff;">.deb</code> and <code style="background:#242428;border-color:#333338;color:#fff;">.rpm</code> packages, tarballs, Flatpaks, installer scripts and Windows games. <strong>One command, no root</strong>, and everything tracked so uninstalls are actually clean.</p>
     <div class="install-box">
       <p class="label">Install &mdash; latest release v0.2.1</p>
       <pre><span class="prompt">$</span> cargo install --git https://github.com/nordicnode/dropin dropin-cli</pre>
@@ -151,6 +159,15 @@
       <a class="btn btn-ghost" href="https://github.com/nordicnode/dropin">View source on GitHub</a>
     </div>
     <p class="hero-meta"><span>Command-line tool</span><span>No root required</span><span>No account</span><span>No telemetry</span></p>
+    </div>
+    <div class="hero-demo">
+      <div class="window-bar"><i></i><i></i><i></i><span>terminal</span></div>
+      <pre><span class="prompt">$</span> dropin info coolapp.AppImage
+Format: AppImage
+Publisher: coolapp
+Install plan: 2 tasks tracked
+<span class="ok">VERDICT: SAFE TO INSTALL</span></pre>
+    </div>
   </div>
 </header>
 
@@ -212,7 +229,7 @@ coolapp — tar.gz archive</pre>
     <div class="grid">
       <div class="card"><span class="num">01</span><h3>Audited first</h3><p>Before anything runs, dropin scans the script and explains what it found in plain language: what it will install, whether it wants the internet, whether it touches system folders or asks for sudo.</p></div>
       <div class="card"><span class="num">02</span><h3>Sandboxed</h3><p>Scripts run under bubblewrap: no network unless you allow it, the system read-only, only your install folders writable, your SSH and GPG keys hidden. If bubblewrap isn&rsquo;t installed, dropin refuses rather than running unsandboxed.</p></div>
-      <div class="card"><span class="num">03</span><h3>Fully logged</h3><p>Every byte of installer output is logged to <code>~/.local/share/dropin/script-logs/</code>.</p></div>
+      <div class="card"><span class="num">03</span><h3>Fully logged</h3><p>Every byte of installer output is logged to <code>~/.local/share/dropin/script-logs/</code>, so if an install goes wrong you can see exactly what the installer did.</p></div>
       <div class="card"><span class="num">04</span><h3>Reversible</h3><p>Before the script runs, dropin snapshots your writable folders with hardlinks. Removing the app later deletes what the installer added and restores what it changed or deleted.</p></div>
     </div>
   </div>
